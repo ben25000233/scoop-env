@@ -58,7 +58,11 @@ def matrix_to_pose_7d(matrix: torch.Tensor):
 
 class IsaacSim():
     def __init__(self, userDefinedSettings):
-        self.tool = None
+        #tool_type : spoon, knife, stir, fork
+        self.tool = "spoon"
+        #set ball_amount
+        self.ball_amount = 10
+        
         # initialize gym
         self.gym = gymapi.acquire_gym()
         #self.domainInfo = WeighingDomainInfo(userDefinedSettings=userDefinedSettings, domain_range=None, flag_list=None)
@@ -232,11 +236,10 @@ class IsaacSim():
         z = self.default_height/2 + 0.2
         ball_pose.r = gymapi.Quat(0, 0, 0, 1)
         ball_spacing = self.between_ball_space
-    
-        n = 10
-        while n > 0:
+        
+        while self.ball_amount > 0:
             y = -0.025
-            ran = min(n, 8)
+            ran = min(self.ball_amount, 8)
             for j in range(ran):
                 x = 0.48
                 for k in range(ran):
@@ -247,13 +250,11 @@ class IsaacSim():
                     x += ball_spacing*0.18
                 y += ball_spacing*0.18
             z += ball_spacing*0.2
-            n -= 1
+            self.ball_amount -= 1
 
     def create_franka(self):
         # create franka asset
         self.num_dofs = 0
-        #tool_type : spoon, knife, stir, fork
-        self.tool = "stir"  
         asset_file_franka = "franka_description/robots/" + self.tool + "_franka.urdf"
         asset_options = gymapi.AssetOptions()
         asset_options.armature = 0.01
