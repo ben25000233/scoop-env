@@ -12,6 +12,10 @@ pip install --extra-index-url https://rospypi.github.io/simple rosmaster defused
 ```
 - [install ROS (for real-robot)](http://wiki.ros.org/ROS/Installation)
 
+## Set parameters
+```
+Please set self.ball_amount in __init__
+```
 ## Change tool
 ```
 Please set self.tool in __init__
