@@ -12,6 +12,11 @@ pip install --extra-index-url https://rospypi.github.io/simple rosmaster defused
 ```
 - [install ROS (for real-robot)](http://wiki.ros.org/ROS/Installation)
 
+## Change tool
+```
+Please set self.tool in __init__
+tool_type : spoon, knife, stir, fork
+```
 ## Experiments
 ```
 cd scoop_env
