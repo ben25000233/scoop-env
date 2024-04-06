@@ -61,11 +61,11 @@ class IsaacSim():
         #tool_type : spoon, knife, stir, fork
         self.tool = "spoon"
         #set ball_amount
-        self.ball_amount = 10
-        
+        self.ball_amount = 16
+
         # initialize gym
         self.gym = gymapi.acquire_gym()
-        #self.domainInfo = WeighingDomainInfo(userDefinedSettings=userDefinedSettings, domain_range=None, flag_list=None)
+        self.domainInfo = WeighingDomainInfo(userDefinedSettings=userDefinedSettings, domain_range=None, flag_list=None)
 
         # create simulator
         self.env_spacing = 1.5
@@ -140,7 +140,7 @@ class IsaacSim():
         sim_params.physx.num_velocity_iterations = 1
 
         sim_params.physx.friction_offset_threshold = 0.001
-        sim_params.physx.friction_correlation_distance = 0.0005
+        sim_params.physx.friction_correlation_distance = 0.0001
         sim_params.physx.contact_offset = 0.009
         sim_params.physx.rest_offset = 0.000001
         sim_params.physx.max_depenetration_velocity = 1000
@@ -202,8 +202,7 @@ class IsaacSim():
 
     def create_ball(self):
         
-        #self.ball_radius, self.ball_mass, self.ball_friction = self.domainInfo.get_domain_parameters()
-        self.ball_radius, self.ball_mass, self.ball_friction = 0.005,3e-05 ,1.0
+        self.ball_radius, self.ball_mass, self.ball_friction = self.domainInfo.get_domain_parameters()
         self.between_ball_space = 0.04
         ballGenerator = BallGenerator()
         file_name = 'BallHLS.urdf'
