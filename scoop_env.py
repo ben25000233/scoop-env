@@ -61,7 +61,7 @@ class IsaacSim():
         #tool_type : spoon, knife, stir, fork
         self.tool = "spoon"
         #set ball_amount
-        self.ball_amount = 16
+        self.ball_amount = 6
 
         # initialize gym
         self.gym = gymapi.acquire_gym()
@@ -95,8 +95,8 @@ class IsaacSim():
 
         # Look at the first env
         self.cam_pos = gymapi.Vec3(0.7, 0, 1.2)
-        cam_target = gymapi.Vec3(0, 0, 0)
-        self.gym.viewer_camera_look_at(self.viewer, None, self.cam_pos, cam_target)
+        self.cam_target = gymapi.Vec3(0, 0, 0)
+        self.gym.viewer_camera_look_at(self.viewer, None, self.cam_pos, self.cam_target)
 
         
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
@@ -139,10 +139,10 @@ class IsaacSim():
         sim_params.physx.num_position_iterations = 4
         sim_params.physx.num_velocity_iterations = 1
 
-        sim_params.physx.friction_offset_threshold = 0.001
-        sim_params.physx.friction_correlation_distance = 0.0001
-        sim_params.physx.contact_offset = 0.009
-        sim_params.physx.rest_offset = 0.000001
+        sim_params.physx.friction_offset_threshold = 0.0001
+        sim_params.physx.friction_correlation_distance = 1
+        sim_params.physx.contact_offset = 0.2
+        sim_params.physx.rest_offset = 0.0001
         sim_params.physx.max_depenetration_velocity = 1000
 
         
@@ -183,7 +183,7 @@ class IsaacSim():
         self.bowl_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
         
         self.bowl_pose = gymapi.Transform()
-        self.bowl_pose.r = gymapi.Quat(1, -0.4, 0, 1)
+        self.bowl_pose.r = gymapi.Quat(1, 0, 0, 1)
         self.bowl_pose.p = gymapi.Vec3(0.5, 0 , self.default_height/2)  
 
     def create_spoon(self):
@@ -191,7 +191,7 @@ class IsaacSim():
         # Load spoon asset
         file_name = 'grab_spoon/spoon.urdf'
         asset_options = gymapi.AssetOptions()
-        asset_options.armature = 0.01
+        asset_options.armature = 1
         asset_options.vhacd_enabled = True
         asset_options.vhacd_params.resolution = 300000
         self.spoon_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
@@ -203,7 +203,7 @@ class IsaacSim():
     def create_ball(self):
         
         self.ball_radius, self.ball_mass, self.ball_friction = self.domainInfo.get_domain_parameters()
-        self.between_ball_space = 0.04
+        self.between_ball_space = 0.07
         ballGenerator = BallGenerator()
         file_name = 'BallHLS.urdf'
         ballGenerator.generate(file_name=file_name, ball_radius=self.ball_radius, ball_mass=self.ball_mass)
@@ -211,7 +211,7 @@ class IsaacSim():
 
     def set_ball_property(self, env_ptr, ball_pose):
         
-        ball_friction = self.ball_friction
+        ball_friction = self.ball_friction 
         ball_restitution = 0
         ball_rolling_friction = 1
         ball_torsion_friction = 1
@@ -240,12 +240,12 @@ class IsaacSim():
             y = -0.025
             ran = min(self.ball_amount, 8)
             for j in range(ran):
-                x = 0.48
+                x = 0.5
                 for k in range(ran):
                     ball_pose.p = gymapi.Vec3(x, y, z)
                     ball_handle = self.set_ball_property(env_ptr, ball_pose)
                     self.gym.set_rigid_body_color(env_ptr, ball_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color)
-                    self.gym.set_actor_scale(env_ptr, ball_handle, 0.5)
+                    #self.gym.set_actor_scale(env_ptr, ball_handle, 1.5)
                     x += ball_spacing*0.18
                 y += ball_spacing*0.18
             z += ball_spacing*0.2
@@ -288,20 +288,23 @@ class IsaacSim():
 
     def add_franka(self, i, env_ptr):
         # create franka and set properties
-        franka_handle = self.gym.create_actor(env_ptr, self.franka_asset, self.franka_start_pose, "franka", i, 4, 2)
-        franka_sim_index = self.gym.get_actor_index(env_ptr, franka_handle, gymapi.DOMAIN_SIM)
+        self.franka_handle = self.gym.create_actor(env_ptr, self.franka_asset, self.franka_start_pose, "franka", i, 4, 2)
+        franka_sim_index = self.gym.get_actor_index(env_ptr, self.franka_handle, gymapi.DOMAIN_SIM)
         self.franka_indices.append(franka_sim_index)
 
         franka_dof_index = [
-            self.gym.find_actor_dof_index(env_ptr, franka_handle, dof_name, gymapi.DOMAIN_SIM)
+            self.gym.find_actor_dof_index(env_ptr, self.franka_handle, dof_name, gymapi.DOMAIN_SIM)
             for dof_name in self.franka_dof_names
         ]
+     
         self.franka_dof_indices.extend(franka_dof_index)
 
-        franka_hand_sim_idx = self.gym.find_actor_rigid_body_index(env_ptr, franka_handle, "panda_hand", gymapi.DOMAIN_SIM)
-        self.franka_hand_indices.append(franka_hand_sim_idx)
+        self.franka_hand = self.gym.find_actor_rigid_body_handle(env_ptr, self.franka_handle, "panda_hand")
 
-        self.gym.set_actor_dof_properties(env_ptr, franka_handle, self.franka_dof_props)
+        self.franka_hand_sim_idx = self.gym.find_actor_rigid_body_index(env_ptr, self.franka_handle, "panda_hand", gymapi.DOMAIN_SIM)
+        self.franka_hand_indices.append(self.franka_hand_sim_idx)
+
+        self.gym.set_actor_dof_properties(env_ptr, self.franka_handle, self.franka_dof_props)
 
     def _create_envs(self, num_envs, spacing, num_per_row):
         lower = gymapi.Vec3(-spacing, 0.75 * -spacing, 0.0)
@@ -321,31 +324,21 @@ class IsaacSim():
         self.urdf_link_indices = []
         self.envs = []
 
+        #set camera
+        camera_props = gymapi.CameraProperties()
+        camera_props.width = 1080
+        camera_props.height = 720
+
+
         # create and populate the environments
         for i in range(num_envs):
             # create env
             env_ptr = self.gym.create_env(self.sim, lower, upper, num_per_row)
             self.envs.append(env_ptr)
 
-            # #create camera
-            # cam_pos = gymapi.Vec3(0.7, 0, 1.2)
-            # cam_target = gymapi.Vec3(0, 0, 0)
-
-            # direction_vector = cam_target - cam_pos
-            # yaw = np.degrees(np.arctan2(direction_vector.y, direction_vector.x))
-            # pitch = np.degrees(np.arctan2(-direction_vector.z, np.sqrt(direction_vector.x**2 + direction_vector.y**2)))
-            # cam_rot =  gymapi.Vec3(pitch, yaw, 0.0)
-            # camera_handle = self.gym.create_camera_sensor(env_ptr, gymapi.CameraProperties())
-            # self.gym.set_camera_location(camera_handle, cam_pos)
-            # self.gym.set_camera_rotation(camera_handle, cam_rot)
-
             #add bowl
             self.bowl = self.gym.create_actor(env_ptr, self.bowl_asset, self.bowl_pose, "bowl", 0, 0)
-            self.gym.set_actor_scale(env_ptr, self.bowl, 0.3)
-
-            self.bowl_pose.p = gymapi.Vec3(0.5, 0.3 , self.default_height/2) 
-            self.bowl_2 = self.gym.create_actor(env_ptr, self.bowl_asset, self.bowl_pose, "bowl", 0, 0)
-            self.gym.set_actor_scale(env_ptr, self.bowl_2, 0.5)
+            #self.gym.set_actor_scale(env_ptr, self.bowl, 0.3)
 
             #add tabel
             self.tabel = self.gym.create_actor(env_ptr, self.table_asset, self.table_pose, "table", 0, 0)
@@ -359,6 +352,22 @@ class IsaacSim():
             #add spoon
             #self.spoon = self.gym.create_actor(env_ptr, self.spoon_asset, self.spoon_pose, "spoon", 0, 0)
 
+            #add camera_1
+            cam_pos = gymapi.Vec3(0.7, 0, 1.2)
+            cam_target = gymapi.Vec3(0, 0, 0)
+            camera_1 = self.gym.create_camera_sensor(env_ptr, camera_props)
+            self.gym.set_camera_location(camera_1, env_ptr, cam_pos, cam_target)
+            self.camera_handles.append(camera_1)
+
+            #add camera_2
+            camera_2 = self.gym.create_camera_sensor(env_ptr, camera_props)
+            camera_offset = gymapi.Vec3(0, 0, 0)
+            camera_rotation = gymapi.Quat(0.707388, 0.0005629, 0.706825, 0.0005633)
+          
+            self.gym.attach_camera_to_body(camera_2, env_ptr, self.franka_hand, gymapi.Transform(camera_offset, camera_rotation),
+                                    gymapi.FOLLOW_TRANSFORM)
+            self.camera_handles.append(camera_2)
+
 
 
         
@@ -370,7 +379,8 @@ class IsaacSim():
         self.kit_indices = to_torch(self.kit_indices, dtype=torch.long, device=self.device)
 
     def reset(self):
-        self.franka_init_pose = torch.tensor([-0.4969, -0.5425,  0.3321, -2.0888,  0.0806,  1.6983,  0.5075,  0.0400, 0.0400], dtype=torch.float32, device=self.device)
+        self.franka_init_pose = torch.tensor([-0.4844, -0.4723,  0.4280, -2.2071,  0.0559,  1.5720,  0.5758,  0.0400,
+          0.0400], dtype=torch.float32, device=self.device)
         
         self.dof_state[:, self.franka_dof_indices, 0] = self.franka_init_pose
         self.dof_state[:, self.franka_dof_indices, 1] = 0
@@ -412,32 +422,34 @@ class IsaacSim():
         self.reset()
 
         action = ""
-
+        step = 0
         while not self.gym.query_viewer_has_closed(self.viewer):
-            
+            #print(self.dof_state[:, self.franka_dof_indices, 0])
             # step the physics
             self.gym.simulate(self.sim)
             self.gym.fetch_results(self.sim, True)
             self.gym.render_all_camera_sensors(self.sim)
 
-            # #get image
-            # self.gym.step_graphics(self.sim)
+            # get camera images
+            imgs = []
+            self.gym.render_all_camera_sensors(self.sim)
+            self.gym.start_access_image_tensors(self.sim)
 
-            # # Retrieve image
-            # image = self.gym.get_camera_image(self.camera_handle, gymapi.IMAGE_COLOR)
+            #save img
+            for i in range(self.num_envs):
+                img = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR)
+                img = img.reshape((720, 1080, 4))
+                # save images
+                RGB = img[:, :, :3]  # This will give you the first 3 channels (RGB)
+                RGB = RGB * 255
 
-            # # Convert image to OpenCV format
-            # #image = np.reshape(image, (image.height, image.width, 4))
-            # image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
-
-            # cv2.imshow('My Image', image)
-
-            # # 按下任意鍵則關閉所有視窗
-            # cv2.waitKey(0)
-            # cv2.destroyAllWindows()
-            # # Store image (e.g., save to disk)
-            # cv2.imwrite('output_image.png', image)
-
+                # if step > 10 :
+                    
+                #     self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR, "collected_data/temp.png")
+                    
+                
+                
+            step+=1
             self.gym.refresh_dof_state_tensor(self.sim)
             self.gym.refresh_actor_root_state_tensor(self.sim)
             self.gym.refresh_rigid_body_state_tensor(self.sim)
@@ -447,7 +459,7 @@ class IsaacSim():
             gripper_close = self.franka_dof_lower_limits[7:]
             delta = 0.01
 
-            # 
+            
             for evt in self.gym.query_viewer_action_events(self.viewer):
                 action = evt.action if (evt.value) > 0 else ""
 
