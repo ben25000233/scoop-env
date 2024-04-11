@@ -1,23 +1,3 @@
-"""
-Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
-
-NVIDIA CORPORATION and its licensors retain all intellectual property
-and proprietary rights in and to this software, related documentation
-and any modifications thereto. Any use, reproduction, disclosure or
-distribution of this software and related documentation without an express
-license agreement from NVIDIA CORPORATION is strictly prohibited.
-
-
-DOF control methods example
----------------------------
-An example that demonstrates various DOF control methods:
-- Load cartpole asset from an urdf
-- Get/set DOF properties
-- Set DOF position and velocity targets
-- Get DOF positions
-- Apply DOF efforts
-"""
-
 from isaacgym import gymtorch
 from isaacgym import gymapi
 from isaacgym import gymutil
@@ -34,9 +14,12 @@ import pytorch3d.transforms
 from tqdm import tqdm
 import cv2
 import math
-import argparse
 torch.pi = math.pi
 
+#for spacemouse control
+import robosuite as suite
+from robosuite.utils.input_utils import input2action
+from robosuite.devices import SpaceMouse
 
 from BallGenerator import BallGenerator
 from WeighingDomainInfo import WeighingDomainInfo
@@ -60,8 +43,6 @@ class IsaacSim():
     def __init__(self, userDefinedSettings):
         #tool_type : spoon, knife, stir, fork
         self.tool = "spoon"
-        #set ball_amount
-        self.ball_amount = 6
 
         # initialize gym
         self.gym = gymapi.acquire_gym()
@@ -78,20 +59,12 @@ class IsaacSim():
         # create viewer using the default camera properties
         self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
 
-        # keyboard event
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_UP, "up")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_DOWN, "down")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_LEFT, "left")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_RIGHT, "right")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_W, "backward")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_S, "forward")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_A, "turn_right")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_D, "turn_left")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_E, "turn_up")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_Q, "turn_down")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_SPACE, "gripper_close")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_X, "save")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_B, "quit")
+        # create sapcemouse
+        self.control = SpaceMouse(pos_sensitivity=1, rot_sensitivity=1)
+
+        # # keyboard event
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_SPACE, "reset")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_Z, "quit")
 
         # Look at the first env
         self.cam_pos = gymapi.Vec3(0.7, 0, 1.2)
@@ -113,6 +86,8 @@ class IsaacSim():
 
         # jacobian entries corresponding to franka hand
         self.j_eef = jacobian[:, self.hand_joint_index, :, :7]
+        
+        
 
     def create_sim(self):
         
@@ -130,11 +105,8 @@ class IsaacSim():
         sim_params.up_axis = gymapi.UP_AXIS_Z
         sim_params.gravity = gymapi.Vec3(0.0, 0.0, self.gravity)
 
-        #黏稠度
         sim_params.dt = 1.0/20
-
         sim_params.substeps = 1
-
         sim_params.physx.solver_type = 1
         sim_params.physx.num_position_iterations = 4
         sim_params.physx.num_velocity_iterations = 1
@@ -151,7 +123,6 @@ class IsaacSim():
         sim_params.physx.use_gpu = args.use_gpu
 
         self.sim = self.gym.create_sim(args.compute_device_id, args.graphics_device_id, args.physics_engine, sim_params)
-        #self.gym.prepare_sim(self.sim)
 
         self._create_ground_plane()
         self._create_envs(self.num_envs, self.env_spacing, int(np.sqrt(self.num_envs)))
@@ -228,6 +199,7 @@ class IsaacSim():
     
     def add_ball(self, env_ptr):
         #add balls
+        self.ball_amount = 6
         c = np.array([115, 78, 48]) / 255.0
         color = gymapi.Vec3(c[0], c[1], c[2])
 
@@ -267,19 +239,25 @@ class IsaacSim():
         self.num_dofs += self.gym.get_asset_dof_count(self.franka_asset)
 
         self.hand_joint_index = self.gym.get_asset_joint_dict(self.franka_asset)["panda_hand_joint"]
+   
 
-        # # set franka dof properties
+        # set franka dof properties
         self.franka_dof_props = self.gym.get_asset_dof_properties(self.franka_asset)
         self.franka_dof_props["driveMode"].fill(gymapi.DOF_MODE_POS)
-        self.franka_dof_props["stiffness"][0:7].fill(100.0)
-        self.franka_dof_props["damping"][0:7].fill(40.0)
-        self.franka_dof_props["stiffness"][7:9].fill(800.0)
-        self.franka_dof_props["damping"][7:9].fill(40.0)
+        self.franka_dof_props["stiffness"][0:7].fill(10.0)
+        self.franka_dof_props["damping"][0:7].fill(4.0)
+        self.franka_dof_props["stiffness"][7:9].fill(80.0)
+        self.franka_dof_props["damping"][7:9].fill(4.0)
 
-        self.franka_dof_lower_limits = self.franka_dof_props['lower']
-        self.franka_dof_upper_limits = self.franka_dof_props['upper']
-        self.franka_dof_lower_limits = to_torch(self.franka_dof_lower_limits, device=self.device)
-        self.franka_dof_upper_limits = to_torch(self.franka_dof_upper_limits, device=self.device)
+        locked_joints = [0,1,2,3]
+        for joint_index in locked_joints:
+            self.franka_dof_props["stiffness"][joint_index] = 1e30  # High stiffness to lock joint
+            self.franka_dof_props["damping"][joint_index] = 1e30
+
+        # self.franka_dof_lower_limits = self.franka_dof_props['lower']
+        # self.franka_dof_upper_limits = self.franka_dof_props['upper']
+        # self.franka_dof_lower_limits = to_torch(self.franka_dof_lower_limits, device=self.device)
+        # self.franka_dof_upper_limits = to_torch(self.franka_dof_upper_limits, device=self.device)
 
         # set default pose
         self.franka_start_pose = gymapi.Transform()
@@ -338,7 +316,7 @@ class IsaacSim():
 
             #add bowl
             self.bowl = self.gym.create_actor(env_ptr, self.bowl_asset, self.bowl_pose, "bowl", 0, 0)
-            #self.gym.set_actor_scale(env_ptr, self.bowl, 0.3)
+            self.gym.set_actor_scale(env_ptr, self.bowl, 0.3)
 
             #add tabel
             self.tabel = self.gym.create_actor(env_ptr, self.table_asset, self.table_pose, "table", 0, 0)
@@ -368,9 +346,6 @@ class IsaacSim():
                                     gymapi.FOLLOW_TRANSFORM)
             self.camera_handles.append(camera_2)
 
-
-
-        
         self.franka_indices = to_torch(self.franka_indices, dtype=torch.long, device=self.device)
         self.franka_dof_indices = to_torch(self.franka_dof_indices, dtype=torch.long, device=self.device)
         self.franka_hand_indices = to_torch(self.franka_hand_indices, dtype=torch.long, device=self.device)
@@ -420,10 +395,11 @@ class IsaacSim():
 
     def data_collection(self):
         self.reset()
-
+        self.control.start_control()
         action = ""
         step = 0
         while not self.gym.query_viewer_has_closed(self.viewer):
+            
             #print(self.dof_state[:, self.franka_dof_indices, 0])
             # step the physics
             self.gym.simulate(self.sim)
@@ -444,7 +420,6 @@ class IsaacSim():
                 RGB = RGB * 255
 
                 # if step > 10 :
-                    
                 #     self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR, "collected_data/temp.png")
                     
                 
@@ -455,49 +430,27 @@ class IsaacSim():
             self.gym.refresh_rigid_body_state_tensor(self.sim)
             self.gym.refresh_jacobian_tensors(self.sim)
 
-            gripper_open = self.franka_dof_upper_limits[7:]
-            gripper_close = self.franka_dof_lower_limits[7:]
-            delta = 0.01
+            # gripper_open = self.franka_dof_upper_limits[7:]
+            # gripper_close = self.franka_dof_lower_limits[7:]
+            delta = 3
 
+            #space mouse control
+            pose = input2action(device=self.control)
+            dpose = pose[:6]
+            dpose[3], dpose[4] = dpose[4], dpose[3]
+            dpose[3] = 0
+            dpose = np.array(dpose)
+            dpose = torch.Tensor(dpose.reshape(-1, 1)).to(self.device) * delta
+            
             
             for evt in self.gym.query_viewer_action_events(self.viewer):
                 action = evt.action if (evt.value) > 0 else ""
 
-            if action == "up":
-                dpose = torch.Tensor([[[0.],[0.],[1.],[0.],[0.],[0.]]]).to(self.device) * delta
-            elif action == "down":
-                dpose = torch.Tensor([[[0.],[0.],[-1.],[0.],[0.],[0.]]]).to(self.device) * delta
-            elif action == "left":
-                dpose = torch.Tensor([[[0.],[-1.],[0.],[0.],[0.],[0.]]]).to(self.device) * delta
-            elif action == "right":
-                dpose = torch.Tensor([[[0.],[1.],[0.],[0.],[0.],[0.]]]).to(self.device) * delta
-            elif action == "backward":
-                dpose = torch.Tensor([[[-1.],[0.],[0.],[0.],[0.],[0.]]]).to(self.device) * delta
-            elif action == "forward":
-                dpose = torch.Tensor([[[1.],[0.],[0.],[0.],[0.],[0.]]]).to(self.device) * delta
-            elif action == "turn_left":
-                dpose = torch.Tensor([[[0.],[0.],[0.],[0.],[0.],[-10.]]]).to(self.device) * delta
-            elif action == "turn_right":
-                dpose = torch.Tensor([[[0.],[0.],[0.],[0.],[0.],[10.]]]).to(self.device) * delta
-            elif action == "turn_up":
-                dpose = torch.Tensor([[[0.],[0.],[0.],[0.],[10.],[0.]]]).to(self.device) * delta
-            elif action == "turn_down":
-                dpose = torch.Tensor([[[0.],[0.],[0.],[0.],[-10.],[0.]]]).to(self.device) * delta
-            elif action == "gripper_close":
-                dpose = torch.Tensor([[[0.],[0.],[0.],[0.],[0.],[0.]]]).to(self.device)
-                if torch.all(self.pos_action[:, 7:9] == gripper_close):
-                    self.pos_action[:, 7:9] = gripper_open
-                elif torch.all(self.pos_action[:, 7:9] == gripper_open):
-                    self.pos_action[:, 7:9] = gripper_close
-            elif action == "save":
+            if action == "reset" : 
                 self.reset()
-                hand_pos = self.rb_state_tensor[self.franka_hand_indices, 0:3]
-                hand_rot = self.rb_state_tensor[self.franka_hand_indices, 3:7]
-                dpose = torch.Tensor([[[0.],[0.],[0.],[0.],[0.],[0.]]]).to(self.device)
-            elif action == "quit":
+            elif action == "quit" : 
                 break
-            else:
-                dpose = torch.Tensor([[[0.],[0.],[0.],[0.],[0.],[0.]]]).to(self.device)
+
 
             self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_indices, 0].squeeze(-1)[:, :7] + self.control_ik(dpose)
        
@@ -608,6 +561,6 @@ class IsaacSim():
 
 if __name__ == "__main__":
     issac = IsaacSim()
-    issac.data_collection()
+    #issac.data_collection()
 
-    #issac.simulate()
+    issac.simulate()
