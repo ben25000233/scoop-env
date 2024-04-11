@@ -21,9 +21,10 @@ Please set self.ball_amount in __init__
 Please set self.tool in __init__
 tool_type : spoon, knife, stir, fork
 ```
-## Experiments
+## Run
 ```
-cd scoop_env
+#for spacemouse controller license 
+sudo chmod 0666 /dev/hidraw*
 python scoop.py
 ```
 
