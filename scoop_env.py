@@ -331,7 +331,7 @@ class IsaacSim():
             #self.spoon = self.gym.create_actor(env_ptr, self.spoon_asset, self.spoon_pose, "spoon", 0, 0)
 
             #add camera_1
-            cam_pos = gymapi.Vec3(0.7, 0, 1.2)
+            cam_pos = gymapi.Vec3(0.7, 0, 0.8)
             cam_target = gymapi.Vec3(0, 0, 0)
             camera_1 = self.gym.create_camera_sensor(env_ptr, camera_props)
             self.gym.set_camera_location(camera_1, env_ptr, cam_pos, cam_target)
@@ -339,8 +339,8 @@ class IsaacSim():
 
             #add camera_2
             camera_2 = self.gym.create_camera_sensor(env_ptr, camera_props)
-            camera_offset = gymapi.Vec3(0, 0, 0)
-            camera_rotation = gymapi.Quat(0.707388, 0.0005629, 0.706825, 0.0005633)
+            camera_offset = gymapi.Vec3(0.1, 0, 0)
+            camera_rotation = gymapi.Quat(0.75, 0, 0.7, 0)
           
             self.gym.attach_camera_to_body(camera_2, env_ptr, self.franka_hand, gymapi.Transform(camera_offset, camera_rotation),
                                     gymapi.FOLLOW_TRANSFORM)
@@ -407,21 +407,15 @@ class IsaacSim():
             self.gym.render_all_camera_sensors(self.sim)
 
             # get camera images
-            imgs = []
             self.gym.render_all_camera_sensors(self.sim)
             self.gym.start_access_image_tensors(self.sim)
 
             #save img
             for i in range(self.num_envs):
-                img = self.gym.get_camera_image(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR)
-                img = img.reshape((720, 1080, 4))
-                # save images
-                RGB = img[:, :, :3]  # This will give you the first 3 channels (RGB)
-                RGB = RGB * 255
-
-                # if step > 10 :
-                #     self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[i], gymapi.IMAGE_COLOR, "collected_data/temp.png")
-                    
+                if step > 10 and step % 10 == 0:
+                    self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[0], gymapi.IMAGE_COLOR, "collected_data/top_view/" + str(step)+".png")
+                    self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[1], gymapi.IMAGE_COLOR, "collected_data/hand_view/" + str(step) + ".png")
+                                    
                 
                 
             step+=1
