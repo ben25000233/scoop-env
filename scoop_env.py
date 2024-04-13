@@ -354,8 +354,7 @@ class IsaacSim():
         self.kit_indices = to_torch(self.kit_indices, dtype=torch.long, device=self.device)
 
     def reset(self):
-        self.franka_init_pose = torch.tensor([-0.4844, -0.4723,  0.4280, -2.2071,  0.0559,  1.5720,  0.5758,  0.0400,
-          0.0400], dtype=torch.float32, device=self.device)
+        self.franka_init_pose = torch.tensor([0, -0.6, 0, -2, 0, 1.5,  0.8,  0.04,  0.04], dtype=torch.float32, device=self.device)
         
         self.dof_state[:, self.franka_dof_indices, 0] = self.franka_init_pose
         self.dof_state[:, self.franka_dof_indices, 1] = 0
