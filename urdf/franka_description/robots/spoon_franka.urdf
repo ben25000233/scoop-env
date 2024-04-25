@@ -193,7 +193,7 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="meshes/collision/spoon.obj"/>
+        <mesh filename="meshes/collision/combine_hand.obj"/>
       </geometry>
     </collision>
   <inertial>

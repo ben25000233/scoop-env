@@ -14,9 +14,11 @@ import pytorch3d.transforms
 from tqdm import tqdm
 import cv2
 import math
+import json
 torch.pi = math.pi
 
 #for spacemouse control
+# run " sudo chmod 0666 /dev/hidraw* " to give lisense
 import robosuite as suite
 from robosuite.utils.input_utils import input2action
 from robosuite.devices import SpaceMouse
@@ -105,15 +107,15 @@ class IsaacSim():
         sim_params.up_axis = gymapi.UP_AXIS_Z
         sim_params.gravity = gymapi.Vec3(0.0, 0.0, self.gravity)
 
-        sim_params.dt = 1.0/20
+        sim_params.dt = 1.0/10
         sim_params.substeps = 1
         sim_params.physx.solver_type = 1
         sim_params.physx.num_position_iterations = 4
         sim_params.physx.num_velocity_iterations = 1
 
         sim_params.physx.friction_offset_threshold = 0.0001
-        sim_params.physx.friction_correlation_distance = 1
-        sim_params.physx.contact_offset = 0.2
+        sim_params.physx.friction_correlation_distance = 10
+        sim_params.physx.contact_offset = 1
         sim_params.physx.rest_offset = 0.0001
         sim_params.physx.max_depenetration_velocity = 1000
 
@@ -157,19 +159,6 @@ class IsaacSim():
         self.bowl_pose.r = gymapi.Quat(1, 0, 0, 1)
         self.bowl_pose.p = gymapi.Vec3(0.5, 0 , self.default_height/2)  
 
-    def create_spoon(self):
-        
-        # Load spoon asset
-        file_name = 'grab_spoon/spoon.urdf'
-        asset_options = gymapi.AssetOptions()
-        asset_options.armature = 1
-        asset_options.vhacd_enabled = True
-        asset_options.vhacd_params.resolution = 300000
-        self.spoon_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
-        
-        self.spoon_pose = gymapi.Transform()
-        self.spoon_pose.r = gymapi.Quat(0, 0, 0, 1)
-        self.spoon_pose.p = gymapi.Vec3(0.5, 0 , self.default_height/2+1)  
 
     def create_ball(self):
         
@@ -207,19 +196,21 @@ class IsaacSim():
         z = self.default_height/2 + 0.2
         ball_pose.r = gymapi.Quat(0, 0, 0, 1)
         ball_spacing = self.between_ball_space
+        self.ball_handle_list = []
         
         while self.ball_amount > 0:
             y = -0.025
-            ran = min(self.ball_amount, 8)
+            ran = min(self.ball_amount, 6)
             for j in range(ran):
                 x = 0.5
                 for k in range(ran):
                     ball_pose.p = gymapi.Vec3(x, y, z)
                     ball_handle = self.set_ball_property(env_ptr, ball_pose)
                     self.gym.set_rigid_body_color(env_ptr, ball_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color)
+                    self.ball_handle_list.append(ball_handle)
                     #self.gym.set_actor_scale(env_ptr, ball_handle, 1.5)
-                    x += ball_spacing*0.18
-                y += ball_spacing*0.18
+                    x += ball_spacing*0.15
+                y += ball_spacing*0.15
             z += ball_spacing*0.2
             self.ball_amount -= 1
 
@@ -239,7 +230,6 @@ class IsaacSim():
         self.num_dofs += self.gym.get_asset_dof_count(self.franka_asset)
 
         self.hand_joint_index = self.gym.get_asset_joint_dict(self.franka_asset)["panda_hand_joint"]
-   
 
         # set franka dof properties
         self.franka_dof_props = self.gym.get_asset_dof_properties(self.franka_asset)
@@ -248,16 +238,11 @@ class IsaacSim():
         self.franka_dof_props["damping"][0:7].fill(4.0)
         self.franka_dof_props["stiffness"][7:9].fill(80.0)
         self.franka_dof_props["damping"][7:9].fill(4.0)
-
-        locked_joints = [0,1,2,3]
-        for joint_index in locked_joints:
-            self.franka_dof_props["stiffness"][joint_index] = 1e30  # High stiffness to lock joint
-            self.franka_dof_props["damping"][joint_index] = 1e30
-
-        # self.franka_dof_lower_limits = self.franka_dof_props['lower']
-        # self.franka_dof_upper_limits = self.franka_dof_props['upper']
-        # self.franka_dof_lower_limits = to_torch(self.franka_dof_lower_limits, device=self.device)
-        # self.franka_dof_upper_limits = to_torch(self.franka_dof_upper_limits, device=self.device)
+        
+        #lock joint
+        # locked_joints = []
+        # for joint_index in locked_joints:
+        #     self.franka_dof_props["effort"][joint_index] = 0
 
         # set default pose
         self.franka_start_pose = gymapi.Transform()
@@ -287,12 +272,11 @@ class IsaacSim():
     def _create_envs(self, num_envs, spacing, num_per_row):
         lower = gymapi.Vec3(-spacing, 0.75 * -spacing, 0.0)
         upper = gymapi.Vec3(spacing, 0.75 * spacing, spacing)
-        self.default_height = 0.9
+        self.default_height = 1.1
         self.create_bowl()
         self.create_ball()
         self.create_table()
         self.create_franka()
-        self.create_spoon()
     
         # cache some common handles for later use
         self.camera_handles = []
@@ -331,7 +315,7 @@ class IsaacSim():
             #self.spoon = self.gym.create_actor(env_ptr, self.spoon_asset, self.spoon_pose, "spoon", 0, 0)
 
             #add camera_1
-            cam_pos = gymapi.Vec3(0.7, 0, 0.8)
+            cam_pos = gymapi.Vec3(0.7, 0, 0.9)
             cam_target = gymapi.Vec3(0, 0, 0)
             camera_1 = self.gym.create_camera_sensor(env_ptr, camera_props)
             self.gym.set_camera_location(camera_1, env_ptr, cam_pos, cam_target)
@@ -354,7 +338,11 @@ class IsaacSim():
         self.kit_indices = to_torch(self.kit_indices, dtype=torch.long, device=self.device)
 
     def reset(self):
-        self.franka_init_pose = torch.tensor([0, -0.6, 0, -2, 0, 1.5,  0.8,  0.04,  0.04], dtype=torch.float32, device=self.device)
+        #save property
+        self.balls_dis = []
+        self.scooped_quantity = []
+        self.joint_state = []
+        self.franka_init_pose = torch.tensor([0, -0.6, 0, -2, 0, 1.5,  0.8,  0.02,  0.02], dtype=torch.float32, device=self.device)
         
         self.dof_state[:, self.franka_dof_indices, 0] = self.franka_init_pose
         self.dof_state[:, self.franka_dof_indices, 1] = 0
@@ -379,6 +367,15 @@ class IsaacSim():
 
         self.frame = 0
 
+    def quantity(self):
+        ball_in_spoon = 0
+        for ball_handle in self.ball_handle_list:
+            body_states = self.gym.get_actor_rigid_body_states(self.envs[0], ball_handle, gymapi.STATE_ALL)
+            z = body_states['pose']['p'][0][2]
+            if z > 0.65 and self.frame > 10:
+                ball_in_spoon += 1
+        return ball_in_spoon
+
     def control_ik(self, dpose, damping=0.05):
         # solve damped least squares
         j_eef_T = torch.transpose(self.j_eef, 1, 2)
@@ -386,47 +383,27 @@ class IsaacSim():
         u = (j_eef_T @ torch.inverse(self.j_eef @ j_eef_T + lmbda) @ dpose).view(self.num_envs, 7)
         return u
 
-    def orientation_error(self, desired, current):
-        cc = quat_conjugate(current)
-        q_r = quat_mul(desired, cc)
-        return q_r[:, 0:3] * torch.sign(q_r[:, 3]).unsqueeze(-1)
-
 
     def data_collection(self):
         self.reset()
         self.control.start_control()
         action = ""
-        step = 0
+        scoop_round = 0
+        pre_time = time.time()
+
         while not self.gym.query_viewer_has_closed(self.viewer):
             
             #print(self.dof_state[:, self.franka_dof_indices, 0])
-            # step the physics
+
             self.gym.simulate(self.sim)
             self.gym.fetch_results(self.sim, True)
-            self.gym.render_all_camera_sensors(self.sim)
 
-            # get camera images
-            self.gym.render_all_camera_sensors(self.sim)
-            self.gym.start_access_image_tensors(self.sim)
-
-            #save img
-            for i in range(self.num_envs):
-                if step > 10 and step % 10 == 0:
-                    self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[0], gymapi.IMAGE_COLOR, "collected_data/top_view/" + str(step)+".png")
-                    self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[1], gymapi.IMAGE_COLOR, "collected_data/hand_view/" + str(step) + ".png")
-                                    
-                
-                
-            step+=1
             self.gym.refresh_dof_state_tensor(self.sim)
             self.gym.refresh_actor_root_state_tensor(self.sim)
             self.gym.refresh_rigid_body_state_tensor(self.sim)
             self.gym.refresh_jacobian_tensors(self.sim)
 
-            # gripper_open = self.franka_dof_upper_limits[7:]
-            # gripper_close = self.franka_dof_lower_limits[7:]
             delta = 3
-
             #space mouse control
             pose = input2action(device=self.control)
             dpose = pose[:6]
@@ -434,18 +411,62 @@ class IsaacSim():
             dpose[3] = 0
             dpose = np.array(dpose)
             dpose = torch.Tensor(dpose.reshape(-1, 1)).to(self.device) * delta
-            
+
+
+            # get camera images
+            self.gym.render_all_camera_sensors(self.sim)
+            self.gym.start_access_image_tensors(self.sim)
+
+            if not os.path.exists(f"collected_data/scoop_round_{scoop_round}/top_view"):
+                os.makedirs(f"collected_data/scoop_round_{scoop_round}/top_view")
+            if not os.path.exists(f"collected_data/scoop_round_{scoop_round}/hand_view"):
+                os.makedirs(f"collected_data/scoop_round_{scoop_round}/hand_view")
+
+            if self.frame > 10 :
+                # self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[0], gymapi.IMAGE_COLOR, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/top_view/{str(self.frame)}.png")
+                # self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[1], gymapi.IMAGE_COLOR, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/hand_view/{str(self.frame)}.png")
+                #self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[0], gymapi.IMAGE_DEPTH, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/top_view/depth_{str(self.frame)}.png")
+                #self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[1], gymapi.IMAGE_DEPTH, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/hand_view/depth_{str(self.frame)}.png")
+                self.scooped_quantity.append(self.quantity())
+                self.joint_state.append(list(self.dof_state[:, self.franka_dof_indices, 0]))
+
+                for ball_handle in self.ball_handle_list:
+                    body_states = self.gym.get_actor_rigid_body_states(self.envs[0], ball_handle, gymapi.STATE_ALL)
+                    ball_dis = body_states['pose']['p'][0]
+                    self.balls_dis.append(list(ball_dis))
+
+                       
             
             for evt in self.gym.query_viewer_action_events(self.viewer):
                 action = evt.action if (evt.value) > 0 else ""
 
             if action == "reset" : 
-                self.reset()
+                current_time = time.time()
+                if current_time - pre_time > 1:
+                    # with open(f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/joint_state.json", "w") as file:
+                    #     json.dump(self.joint_state, file)
+                   
+                    # with open(f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/balls_dis.json", "w") as file:
+                    #     json.dump(self.balls_dis, file)
+
+                    # with open(f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/quantity.json", "w") as file:
+                    #     json.dump(self.scooped_quantity, file)
+                    scoop_round += 1
+                    pre_time = time.time()
+                    self.reset()
             elif action == "quit" : 
                 break
+    
+            
+            #print(dpose)
+            move = self.control_ik(dpose)
+            #redefine rotate and scoop
+            if abs(self.control_ik(dpose)[0][6]) > 0.1 :
+                move = torch.Tensor([[0,0,dpose[1],0,0,0, dpose[5]]])
+            elif abs(dpose[4]) > 0.1 :
+                move = torch.Tensor([[0,0,0,0,0, -dpose[4], 0]])
+            self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_indices, 0].squeeze(-1)[:, :7] + move
 
-
-            self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_indices, 0].squeeze(-1)[:, :7] + self.control_ik(dpose)
        
             test_dof_state = self.dof_state[:, :, 0].contiguous()
             test_dof_state[:, self.franka_dof_indices] = self.pos_action
@@ -469,8 +490,7 @@ class IsaacSim():
         self.gym.destroy_viewer(self.viewer)
         self.gym.destroy_sim(self.sim)
 
-   
+
 if __name__ == "__main__":
     issac = IsaacSim()
-    #issac.data_collection()
-
+    issac.data_collection()
