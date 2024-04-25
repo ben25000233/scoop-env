@@ -5,6 +5,7 @@
 ### To build environments
 - [install pytorch](https://pytorch.org/get-started/locally/)
 - [install isaacgym](https://developer.nvidia.com/isaac-gym)
+- [download robosuite](https://github.com/ARISE-Initiative/robosuite/tree/master)
 - install ROS with minimum packages (for simulation)
 ```
 pip install --extra-index-url https://rospypi.github.io/simple rospy-all
