@@ -57,7 +57,7 @@ class IsaacSim():
         self.gravity = -1.0
 
         self.create_sim()
-        
+       
         # create viewer using the default camera properties
         self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
 
@@ -107,7 +107,7 @@ class IsaacSim():
         sim_params.up_axis = gymapi.UP_AXIS_Z
         sim_params.gravity = gymapi.Vec3(0.0, 0.0, self.gravity)
 
-        sim_params.dt = 1.0/10
+        sim_params.dt = 1.0/20
         sim_params.substeps = 1
         sim_params.physx.solver_type = 1
         sim_params.physx.num_position_iterations = 4
@@ -137,12 +137,13 @@ class IsaacSim():
     def create_table(self):
 
         # create table asset
-        table_dims = gymapi.Vec3(0.5, 1, self.default_height)
+        table_dims = gymapi.Vec3(0.3, 0.8, self.default_height)
         asset_options = gymapi.AssetOptions()
         asset_options.fix_base_link = True
         self.table_asset = self.gym.create_box(self.sim, table_dims.x, table_dims.y, table_dims.z, asset_options)
         self.table_pose = gymapi.Transform()
         self.table_pose.p = gymapi.Vec3(0.5, 0, 0)
+        self.table_pose.r = gymapi.Quat(0, 0, 0, 1)
         
     def create_bowl(self):
 
@@ -155,15 +156,24 @@ class IsaacSim():
         asset_options.vhacd_params.resolution = 500000
         self.bowl_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
         
-        self.bowl_pose = gymapi.Transform()
-        self.bowl_pose.r = gymapi.Quat(1, 0, 0, 1)
-        self.bowl_pose.p = gymapi.Vec3(0.5, 0 , self.default_height/2)  
+
+    def create_bolt(self):
+
+        # Load bolt asset
+        file_name = 'grains/bolt.urdf'
+        asset_options = gymapi.AssetOptions()
+        self.between_ball_space = 0.1
+        asset_options.armature = 0.01
+        asset_options.vhacd_params.resolution = 500000
+        self.bolt_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
+        
 
 
     def create_ball(self):
-        
+
+        self.domainInfo.set_domain_parameter_all_space(radius = 0.005, mass = 0.03, friction = 0)
         self.ball_radius, self.ball_mass, self.ball_friction = self.domainInfo.get_domain_parameters()
-        self.between_ball_space = 0.07
+        self.between_ball_space = 0.03
         ballGenerator = BallGenerator()
         file_name = 'BallHLS.urdf'
         ballGenerator.generate(file_name=file_name, ball_radius=self.ball_radius, ball_mass=self.ball_mass)
@@ -171,25 +181,24 @@ class IsaacSim():
 
     def set_ball_property(self, env_ptr, ball_pose):
         
-        ball_friction = self.ball_friction 
-        ball_restitution = 0
-        ball_rolling_friction = 1
-        ball_torsion_friction = 1
+        #ball_handle = self.gym.create_actor(env_ptr, self.ball_asset, ball_pose, "grain", 0, 0)
         ball_handle = self.gym.create_actor(env_ptr, self.ball_asset, ball_pose, "grain", 0, 0)
         body_shape_prop = self.gym.get_actor_rigid_shape_properties(env_ptr, ball_handle)
-    
-        body_shape_prop[0].friction = ball_friction
-        body_shape_prop[0].rolling_friction = ball_rolling_friction
-        body_shape_prop[0].torsion_friction = ball_torsion_friction
-        body_shape_prop[0].restitution = ball_restitution
+
+        body_shape_prop[0].friction = self.ball_friction
+        body_shape_prop[0].contact_offset = 0.1   # Distance at which contacts are generated
+        body_shape_prop[0].rest_offset = 0      # How far objects should come to rest from the surface of this body 
+        body_shape_prop[0].restitution = 0      # when two objects hit or collide, the speed at which they move after the collision
+        body_shape_prop[0].thickness = 0        # the ratio of the final to initial velocity after the rigid body collides. 
         
         self.gym.set_actor_rigid_shape_properties(env_ptr, ball_handle, body_shape_prop)
         return ball_handle
     
     def add_ball(self, env_ptr):
         #add balls
-        self.ball_amount = 6
+        self.ball_amount = 12
         c = np.array([115, 78, 48]) / 255.0
+        #c = np.array([1, 1, 0]) 
         color = gymapi.Vec3(c[0], c[1], c[2])
 
         ball_pose = gymapi.Transform()
@@ -200,7 +209,7 @@ class IsaacSim():
         
         while self.ball_amount > 0:
             y = -0.025
-            ran = min(self.ball_amount, 6)
+            ran = min(self.ball_amount, 4)
             for j in range(ran):
                 x = 0.5
                 for k in range(ran):
@@ -277,6 +286,7 @@ class IsaacSim():
         self.create_ball()
         self.create_table()
         self.create_franka()
+        self.create_bolt()
     
         # cache some common handles for later use
         self.camera_handles = []
@@ -298,8 +308,18 @@ class IsaacSim():
             env_ptr = self.gym.create_env(self.sim, lower, upper, num_per_row)
             self.envs.append(env_ptr)
 
-            #add bowl
-            self.bowl = self.gym.create_actor(env_ptr, self.bowl_asset, self.bowl_pose, "bowl", 0, 0)
+            #add bowl_1
+            bowl_pose = gymapi.Transform()
+            bowl_pose.r = gymapi.Quat(1, 0, 0, 1)
+            bowl_pose.p = gymapi.Vec3(0.5, 0 , self.default_height/2)  
+            self.bowl = self.gym.create_actor(env_ptr, self.bowl_asset, bowl_pose, "bowl", 0, 0)
+            self.gym.set_actor_scale(env_ptr, self.bowl, 0.3)
+
+            #add bowl_2
+            bowl_pose = gymapi.Transform()
+            bowl_pose.r = gymapi.Quat(1, 0, 0, 1)
+            bowl_pose.p = gymapi.Vec3(0.5, 0.2 , self.default_height/2)  
+            self.bowl = self.gym.create_actor(env_ptr, self.bowl_asset, bowl_pose, "bowl", 0, 0)
             self.gym.set_actor_scale(env_ptr, self.bowl, 0.3)
 
             #add tabel
@@ -421,10 +441,12 @@ class IsaacSim():
                 os.makedirs(f"collected_data/scoop_round_{scoop_round}/top_view")
             if not os.path.exists(f"collected_data/scoop_round_{scoop_round}/hand_view"):
                 os.makedirs(f"collected_data/scoop_round_{scoop_round}/hand_view")
+            import datetime
 
+            now = datetime.datetime.now()
             if self.frame > 10 :
-                # self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[0], gymapi.IMAGE_COLOR, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/top_view/{str(self.frame)}.png")
-                # self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[1], gymapi.IMAGE_COLOR, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/hand_view/{str(self.frame)}.png")
+                self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[0], gymapi.IMAGE_COLOR, f"collected_data/scoop_round_{scoop_round}/top_view/{str(self.frame)}.png")
+                self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[1], gymapi.IMAGE_COLOR, f"collected_data/scoop_round_{scoop_round}/hand_view/{str(self.frame)}.png")
                 #self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[0], gymapi.IMAGE_DEPTH, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/top_view/depth_{str(self.frame)}.png")
                 #self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[1], gymapi.IMAGE_DEPTH, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/hand_view/depth_{str(self.frame)}.png")
                 self.scooped_quantity.append(self.quantity())
@@ -443,14 +465,6 @@ class IsaacSim():
             if action == "reset" : 
                 current_time = time.time()
                 if current_time - pre_time > 1:
-                    # with open(f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/joint_state.json", "w") as file:
-                    #     json.dump(self.joint_state, file)
-                   
-                    # with open(f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/balls_dis.json", "w") as file:
-                    #     json.dump(self.balls_dis, file)
-
-                    # with open(f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/scoop_round_{scoop_round}/quantity.json", "w") as file:
-                    #     json.dump(self.scooped_quantity, file)
                     scoop_round += 1
                     pre_time = time.time()
                     self.reset()

@@ -34,10 +34,10 @@ class BallGenerator(object):
 
     def make_file(self, file_name, root):
         tree = gfg.ElementTree(root)
-        with open(file_name, "wb") as files:
+        with open(f"urdf/{file_name}", "wb") as files:
             tree.write(files)
 
 
 if __name__ == "__main__":
     urdfGenerator = BallGenerator()
-    urdfGenerator.generate(file_name="Environment/Weighing/BallHLS.urdf", ball_radius=0.01, ball_mass=0.001)
+    urdfGenerator.generate(file_name="BallHLS.urdf", ball_radius=0.01, ball_mass=0.001)
