@@ -1,0 +1,60 @@
+<!-- <?xml version="1.0" ?>
+<robot name="isosphere">
+	<link name="soft">
+		<fem>
+			<origin rpy="0.0 0.0 0.0" xyz="0 0 0"/>
+			<density value="1e6"/>
+			<youngs value="1e6"/>
+			<poissons value="1"/>
+			<damping value="0"/>
+			<activationMax value="100"/>
+			<activation value="10"/>
+			<tetmesh filename="icosphere.tet"/>
+			<scale value="0.007"/>
+		</fem>
+	</link>
+
+</robot> -->
+
+<?xml version="1.0" ?>
+<robot name="isosphere">
+	<link name="ball">    
+		<visual>
+			<origin xyz="0 0 0" />
+			<geometry>
+				<sphere radius="0.002" />
+			</geometry>
+	  	</visual>
+		<collision>
+			<origin xyz="0 0 0" />
+			<geometry>
+				<sphere radius="0.002" />
+			</geometry>
+		</collision>
+		<inertial>
+			<mass value="0.3" />
+			<inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01" />
+		</inertial>
+	</link>
+
+	<!-- <joint name = "attach" type = "fixed">
+		<origin xyz = "0.0 0.0 0.0" rpy = "0 0 0"/>
+		<parent link = "ball"/>
+		<child link = "soft"/>
+	</joint>
+
+	<link name="soft">
+		<fem>
+			<origin rpy="0.0 0.0 0.0" xyz="0 0 0"/>
+			<density value="1e6"/>
+			<youngs value="1e6"/>
+			<poissons value="1"/>
+			<damping value="0"/>
+			<activationMax value="100"/>
+			<activation value="10"/>
+			<tetmesh filename="icosphere.tet"/>
+			<scale value="0.007"/>
+		</fem>
+	</link> -->
+
+</robot>
