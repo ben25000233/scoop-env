@@ -240,7 +240,7 @@ class IsaacSim():
         self.between_ball_space = 0.03
         ballGenerator = BallGenerator()
         file_name = 'BallHLS.urdf'
-        ballGenerator.generate(file_name=file_name, ball_radius=self.ball_radius, ball_mass=self.ball_mass)
+        ballGenerator.generate(file_name=file_name, ball_radius=self.ball_radius, ball_mass=self.ball_mass, type = "solid")
         
         asset_options = gymapi.AssetOptions()
         asset_options.armature = 1
@@ -282,7 +282,7 @@ class IsaacSim():
         self.between_soft_space = 0.03
         ballGenerator = BallGenerator()
         file_name = 'BallHLS.urdf'
-        ballGenerator.generate(file_name=file_name, ball_radius=self.core_radius, ball_mass=self.core_mass)
+        ballGenerator.generate(file_name=file_name, ball_radius=self.core_radius, ball_mass=self.core_mass, type = "soft")
         
         asset_options = gymapi.AssetOptions()
         asset_options.armature = 1
@@ -296,18 +296,18 @@ class IsaacSim():
         core_handle = self.gym.create_actor(self.env_ptr, self.core_asset, ball_pose, "core", 0, 0)
 
         body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, core_handle)
-        body_shape_prop[0].contact_offset = 0   # Distance at which contacts are generated
+        body_shape_prop[0].contact_offset = 0.5   # Distance at which contacts are generated
         body_shape_prop[0].rest_offset = 0      # How far objects should come to rest from the surface of this body 
         body_shape_prop[0].restitution = 0.5     # when two objects hit or collide, the speed at which they move after the collision
-        body_shape_prop[0].thickness = 0.0001       # the ratio of the final to initial velocity after the rigid body collides. 
+        body_shape_prop[0].thickness = 1       # the ratio of the final to initial velocity after the rigid body collides. 
         self.gym.set_actor_rigid_shape_properties(self.env_ptr, core_handle, body_shape_prop)
-        c = np.array([115, 78, 48]) / 255.0
+        c = np.array([1, 1, 1]) 
         color = gymapi.Vec3(c[0], c[1], c[2])
-        self.gym.set_rigid_body_color(self.env_ptr, core_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color)
+        self.gym.set_rigid_body_color(self.env_ptr, core_handle, 0, gymapi.MESH_COLLISION, color)
         
     def add_ball(self):
         #add balls
-        self.ball_amount = 4
+        self.ball_amount = 6
         ball_pose = gymapi.Transform()
         z = self.default_height/2 +0.2
         ball_pose.r = gymapi.Quat(0, 0, 0, 1)
