@@ -163,9 +163,12 @@ class IsaacSim():
         # set franka dof properties
         self.franka_dof_props = self.gym.get_asset_dof_properties(self.franka_asset)
         self.franka_dof_props["driveMode"].fill(gymapi.DOF_MODE_POS)
-        self.franka_dof_props["stiffness"][0:7].fill(10.0)
-        self.franka_dof_props["damping"][0:9].fill(4.0)
-        self.franka_dof_props["stiffness"][7:9].fill(80.0)
+        self.franka_dof_props["stiffness"][0:7].fill(100.0)
+        self.franka_dof_props["damping"][0:9].fill(40.0)
+        self.franka_dof_props["stiffness"][7:9].fill(800.0)
+        self.franka_dof_props["damping"][7:9].fill(40.0)
+
+
         
         #lock joint
         # locked_joints = []
@@ -177,9 +180,17 @@ class IsaacSim():
         self.franka_start_pose.p = gymapi.Vec3(0, -0.5, 0.2)
         self.franka_start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
+
     def add_franka(self, i):
         # create franka and set properties
         self.franka_handle = self.gym.create_actor(self.env_ptr, self.franka_asset, self.franka_start_pose, "franka", i, 4, 2)
+       
+        body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, self.franka_handle)
+        for i in range(11):
+            body_shape_prop[i].thickness = 0.0025
+            
+        self.gym.set_actor_rigid_shape_properties(self.env_ptr, self.franka_handle, body_shape_prop)
+
         franka_sim_index = self.gym.get_actor_index(self.env_ptr, self.franka_handle, gymapi.DOMAIN_SIM)
         self.franka_indices.append(franka_sim_index)
 
@@ -196,24 +207,16 @@ class IsaacSim():
         self.franka_hand_indices.append(self.franka_hand_sim_idx)
         self.gym.set_actor_dof_properties(self.env_ptr, self.franka_handle, self.franka_dof_props)
 
-        body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, self.franka_handle)
-        body_shape_prop[0].contact_offset = 0
-        body_shape_prop[0].rest_offset = 0 
-        body_shape_prop[0].restitution = 0
-        body_shape_prop[0].thickness = 0.0001       # the ratio of the final to initial velocity after the rigid body collides.(but have no idea why it will affect the contact distance) 
-        self.gym.set_actor_rigid_shape_properties(self.env_ptr, self.franka_handle, body_shape_prop)
-
-
     
     def create_spoon(self):
 
-        # Load Bowl asset
         file_name = 'spoon/spoon.urdf'
+
         asset_options = gymapi.AssetOptions()
         asset_options.armature = 0.01
         asset_options.vhacd_enabled = True
         #asset_options.fix_base_link = True
-        asset_options.disable_gravity = True
+        #asset_options.disable_gravity = True
 
         asset_options.vhacd_params.resolution = 100000
         self.spoon_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
@@ -232,13 +235,16 @@ class IsaacSim():
 
     def create_ball(self):
 
-        self.domainInfo.set_domain_parameter_all_space(radius = 0.003, mass = 0.3, friction = 0)
+        self.domainInfo.set_domain_parameter_all_space(radius = 0.005, mass = 0.003, friction = 0.1)
         self.ball_radius, self.ball_mass, self.ball_friction = self.domainInfo.get_domain_parameters()
         self.between_ball_space = 0.03
         ballGenerator = BallGenerator()
         file_name = 'BallHLS.urdf'
         ballGenerator.generate(file_name=file_name, ball_radius=self.ball_radius, ball_mass=self.ball_mass)
-        self.ball_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, gymapi.AssetOptions())
+        
+        asset_options = gymapi.AssetOptions()
+        asset_options.armature = 1
+        self.ball_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
 
     def set_ball_property(self, ball_pose):
         
@@ -248,15 +254,16 @@ class IsaacSim():
         body_shape_prop[0].friction = self.ball_friction
         body_shape_prop[0].contact_offset = 0   # Distance at which contacts are generated
         body_shape_prop[0].rest_offset = 0      # How far objects should come to rest from the surface of this body 
-        body_shape_prop[0].restitution = 0.5     # when two objects hit or collide, the speed at which they move after the collision
+        #body_shape_prop[0].restitution = 0.5     # when two objects hit or collide, the speed at which they move after the collision
         body_shape_prop[0].thickness = 0.0001       # the ratio of the final to initial velocity after the rigid body collides. 
-        
         self.gym.set_actor_rigid_shape_properties(self.env_ptr, ball_handle, body_shape_prop)
         c = np.array([115, 78, 48]) / 255.0
         color = gymapi.Vec3(c[0], c[1], c[2])
         self.gym.set_rigid_body_color(self.env_ptr, ball_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color)
         
         return ball_handle
+    
+
     
     def create_soft_ball(self):
         # Load Bowl asset
@@ -269,36 +276,53 @@ class IsaacSim():
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_POS
         self.soft_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
         
+        #set core
+        self.domainInfo.set_domain_parameter_all_space(radius = 0.003, mass = 0.03, friction = 0.1)
+        self.core_radius, self.core_mass, self.core_friction = self.domainInfo.get_domain_parameters()
+        self.between_soft_space = 0.03
+        ballGenerator = BallGenerator()
+        file_name = 'BallHLS.urdf'
+        ballGenerator.generate(file_name=file_name, ball_radius=self.core_radius, ball_mass=self.core_mass)
+        
+        asset_options = gymapi.AssetOptions()
+        asset_options.armature = 1
+        asset_options.disable_gravity = True
+        self.core_asset = self.gym.load_asset(self.sim, self.asset_root, file_name, asset_options)
+        
     
     def set_soft_property(self, ball_pose):
         
-        ball_handle = self.gym.create_actor(self.env_ptr, self.soft_asset, ball_pose, "soft", 0, 0)
-        actor_soft_materials = self.gym.get_actor_soft_materials(self.env_ptr, ball_handle)
+        soft_handle = self.gym.create_actor(self.env_ptr, self.soft_asset, ball_pose, "soft", 0, 0)
+        core_handle = self.gym.create_actor(self.env_ptr, self.core_asset, ball_pose, "core", 0, 0)
 
-        #actor_soft_materials[0].activation = 100
-
-        self.gym.set_actor_soft_materials(self.env_ptr, ball_handle, actor_soft_materials)
-    
+        body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, core_handle)
+        body_shape_prop[0].contact_offset = 0   # Distance at which contacts are generated
+        body_shape_prop[0].rest_offset = 0      # How far objects should come to rest from the surface of this body 
+        body_shape_prop[0].restitution = 0.5     # when two objects hit or collide, the speed at which they move after the collision
+        body_shape_prop[0].thickness = 0.0001       # the ratio of the final to initial velocity after the rigid body collides. 
+        self.gym.set_actor_rigid_shape_properties(self.env_ptr, core_handle, body_shape_prop)
+        c = np.array([115, 78, 48]) / 255.0
+        color = gymapi.Vec3(c[0], c[1], c[2])
+        self.gym.set_rigid_body_color(self.env_ptr, core_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, color)
+        
     def add_ball(self):
         #add balls
         self.ball_amount = 4
         ball_pose = gymapi.Transform()
-        z = self.default_height/2 +0.1
+        z = self.default_height/2 +0.2
         ball_pose.r = gymapi.Quat(0, 0, 0, 1)
         ball_spacing = self.between_ball_space
         self.ball_handle_list = []
-
         while self.ball_amount > 0:
             y = -0.625
             ran = min(self.ball_amount, 4)
+            
             for j in range(ran):
                 x = 0.48
                 for k in range(ran):
                     ball_pose.p = gymapi.Vec3(x, y, z)
-
                     #ball_handle = self.set_ball_property(ball_pose)
                     soft_handle = self.set_soft_property(ball_pose)
-
                     #self.ball_handle_list.append(ball_handle)
                     x += ball_spacing*0.15
                 y += ball_spacing*0.15
@@ -336,7 +360,7 @@ class IsaacSim():
             # create env
             self.env_ptr = self.gym.create_env(self.sim, lower, upper, num_per_row)
             self.envs.append(self.env_ptr)
-            
+
             
             #add bowl_1
             bowl_pose = gymapi.Transform()
@@ -345,7 +369,8 @@ class IsaacSim():
             self.bowl = self.gym.create_actor(self.env_ptr, self.bowl_asset, bowl_pose, "bowl", 0, 0)
 
             body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, self.bowl)
-            body_shape_prop[0].thickness = 0.003      # the ratio of the final to initial velocity after the rigid body collides.(but have no idea why it will affect the contact distance) 
+            # thickness(soft) = 0.0003, thickness(soft) = 0.007
+            body_shape_prop[0].thickness = 0.007      # the ratio of the final to initial velocity after the rigid body collides.(but have no idea why it will affect the contact distance) 
             self.gym.set_actor_rigid_shape_properties(self.env_ptr, self.bowl, body_shape_prop)
             
             
@@ -356,13 +381,14 @@ class IsaacSim():
             self.bowl = self.gym.create_actor(self.env_ptr, self.bowl_asset, bowl_pose, "bowl", 0, 0)
 
             body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, self.bowl)
-            body_shape_prop[0].thickness = 0.005       
+            body_shape_prop[0].thickness = 0.005
             self.gym.set_actor_rigid_shape_properties(self.env_ptr, self.bowl, body_shape_prop)
-            
+        
             # add tabel
             self.tabel = self.gym.create_actor(self.env_ptr, self.table_asset, self.table_pose, "table", 0, 0)
             body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, self.tabel)
             body_shape_prop[0].thickness = 0       
+            body_shape_prop[0].contact_offset = 0
             self.gym.set_actor_rigid_shape_properties(self.env_ptr, self.tabel, body_shape_prop)
             
             # add ball
@@ -370,6 +396,7 @@ class IsaacSim():
 
             #add franka
             self.add_franka(i)
+            
             
             # #add spoon
             # spoon_pose = gymapi.Transform()
@@ -508,9 +535,9 @@ class IsaacSim():
             elif action == "turn_right":
                 dpose = torch.Tensor([[ 0.0775,  0.0020, -0.0529,  0.0076, -0.0055, -0.0154, -0.2675]])
             elif action == "turn_up":
-                dpose = torch.Tensor([[ 9.1676e-05,  1.2668e-01,  6.6803e-05,  9.0901e-02, -5.7178e-04, -2.6339e-01, -5.4366e-04]])*0.3
+                dpose = torch.Tensor([[ 9.1676e-05,  1.2668e-01,  6.6803e-05,  9.0901e-02, -5.7178e-04, -2.6339e-01, -5.4366e-04]])
             elif action == "turn_down":
-                dpose = torch.Tensor([[ 9.4986e-04, -8.1441e-02, -2.4071e-04, -1.6091e-01,  1.4590e-03, 3.7796e-01, -1.8983e-03]])*0.3
+                dpose = torch.Tensor([[ 9.4986e-04, -8.1441e-02, -2.4071e-04, -1.6091e-01,  1.4590e-03, 3.7796e-01, -1.8983e-03]])
 
             self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_indices, 0].squeeze(-1)[:, :7] + dpose*delta
             
