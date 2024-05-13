@@ -15,7 +15,7 @@ pip install --extra-index-url https://rospypi.github.io/simple rosmaster defused
 
 ## Set parameters
 ```
-Please set self.ball_amount in __init__
+Please set self.ball_amount in function add_ball()
 ```
 ## Change tool
 ```
