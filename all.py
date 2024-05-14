@@ -27,7 +27,7 @@ from WeighingDomainInfo import WeighingDomainInfo
 class IsaacSim():
     def __init__(self):
 
-        self.grain_type = "solid"
+        self.grain_type = "soft"
         
         self.default_height = 0.5
         #tool_type : spoon, knife, stir, fork
@@ -65,7 +65,7 @@ class IsaacSim():
         self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_D, "turn_left")
         self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_E, "turn_up")
         self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_Q, "turn_down")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_SPACE, "gripper_close")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_SPACE, "reset")
         self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_X, "save")
         self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_B, "quit")
 
@@ -215,7 +215,6 @@ class IsaacSim():
         self.gym.set_actor_dof_properties(self.env_ptr, self.franka_handle, self.franka_dof_props)
 
         
-
     def create_bolt(self):
 
         # Load bolt asset
@@ -250,6 +249,7 @@ class IsaacSim():
         body_shape_prop[0].rest_offset = 0      # How far objects should come to rest from the surface of this body 
         body_shape_prop[0].restitution = 0     # when two objects hit or collide, the speed at which they move after the collision
         body_shape_prop[0].thickness = 0.00001       # the ratio of the final to initial velocity after the rigid body collides. 
+        
         self.gym.set_actor_rigid_shape_properties(self.env_ptr, ball_handle, body_shape_prop)
         c = np.array([115, 78, 48]) / 255.0
         color = gymapi.Vec3(c[0], c[1], c[2])
@@ -262,7 +262,7 @@ class IsaacSim():
     def create_soft_ball(self):
 
         # Load Soft asset
-        self.soft_amount = 6
+        self.soft_amount = 4
         #(scale, density) -> (0.007, 1e4), (0.009, 1e3)
         density = 1e3
         youngs = 1e10
@@ -341,19 +341,17 @@ class IsaacSim():
         z = self.default_height/2 +0.1
         ball_pose.r = gymapi.Quat(0, 0, 0, 1)
         self.soft_handle_list = []
-        layer = 0
         while self.soft_amount > 0:
             y = -0.53
             ran = min(self.soft_amount, 4)
-            layer += 1
             for j in range(ran):
                 x = 0.475 
                 for k in range(ran):
                     ball_pose.p = gymapi.Vec3(x, y, z)
                     soft_handle = self.set_soft_property(ball_pose)
                     self.soft_handle_list.append(soft_handle)
-                    x += 0.015
-                y += 0.015
+                    x += 0.02
+                y += 0.02
             z += 0.02
             self.soft_amount -= 1
 
@@ -363,10 +361,11 @@ class IsaacSim():
         upper = gymapi.Vec3(0, 0.15 * spacing, spacing)
         self.create_bowl()
         self.create_ball()
+        self.create_soft_ball()
         self.create_table()
         self.create_franka()
         self.create_bolt()
-        self.create_soft_ball()
+        
     
         # cache some common handles for later use
         self.camera_handles = []
@@ -412,11 +411,11 @@ class IsaacSim():
             # body_shape_prop[0].thickness = 0.005
             # self.gym.set_actor_rigid_shape_properties(self.env_ptr, self.bowl, body_shape_prop)
         
-            # # add tabel
-            # table_pose = gymapi.Transform()
-            # table_pose.r = gymapi.Quat(0, 0, 0, 1)
-            # table_pose.p = gymapi.Vec3(0.5, -0.5 , 0)   
-            # self.table = self.gym.create_actor(self.env_ptr, self.table_asset, table_pose, "table", 0, 0)
+            # add tabel
+            table_pose = gymapi.Transform()
+            table_pose.r = gymapi.Quat(0, 0, 0, 1)
+            table_pose.p = gymapi.Vec3(0.5, -0.5 , 0)   
+            self.table = self.gym.create_actor(self.env_ptr, self.table_asset, table_pose, "table", 0, 0)
             
             # add ball
             if self.grain_type == "solid":
@@ -424,6 +423,7 @@ class IsaacSim():
             else :
                 self.add_soft()
 
+            
             #add franka
             self.add_franka(i)
             
@@ -456,8 +456,7 @@ class IsaacSim():
         self.scooped_quantity = []
         self.joint_state = []
 
-        self.franka_init_pose = torch.tensor([-3.1589e-04,  8.4061e-03, -7.2096e-06, -1.3420e+00, -3.9038e-05,
-          1.4565e+00,  7.9936e-01,  0.02,  0.02], dtype=torch.float32)
+        self.franka_init_pose = torch.tensor([-0.0148, -0.5360, -0.0055, -2.3370,  0.0181,  1.9275,  0.8029,  0.02,  0.02], dtype=torch.float32)
         
         self.dof_state[:, self.franka_dof_indices, 0] = self.franka_init_pose
  
@@ -495,6 +494,7 @@ class IsaacSim():
 
 
     def data_collection(self):
+        
         self.reset()
         scoop_round = 0
         action = ""
@@ -507,6 +507,7 @@ class IsaacSim():
             self.gym.refresh_dof_state_tensor(self.sim)
             self.gym.refresh_actor_root_state_tensor(self.sim)
             self.gym.refresh_rigid_body_state_tensor(self.sim)
+            franka_actor_indices = self.franka_indices.to(dtype=torch.int32)
 
             # get camera images
             self.gym.render_all_camera_sensors(self.sim)
@@ -536,6 +537,9 @@ class IsaacSim():
             delta = 1
             for evt in self.gym.query_viewer_action_events(self.viewer):
                 action = evt.action if (evt.value) > 0 else ""
+            
+            # if self.frame == 50 :
+            #     action = "reset"
 
             dpose = torch.Tensor([[0,0,0,0,0,0,0]]) 
 
@@ -559,14 +563,20 @@ class IsaacSim():
                 dpose = torch.Tensor([[ 9.1676e-05,  1.2668e-01,  6.6803e-05,  9.0901e-02, -5.7178e-04, -2.6339e-01, -5.4366e-04]])
             elif action == "turn_down":
                 dpose = torch.Tensor([[ 9.4986e-04, -8.1441e-02, -2.4071e-04, -1.6091e-01,  1.4590e-03, 3.7796e-01, -1.8983e-03]])
+            elif action == "reset" : 
+                franka_init_pose = torch.tensor([[2.9547e-06, -2.6861e-01, -1.7330e-02, -2.1354e+00,  2.6204e-02, 1.9601e+00,  7.7954e-01,  0.02,  0.02]], dtype=torch.float32)
+                self.dof_state[:, self.franka_dof_indices, 0] = franka_init_pose
+                self.gym.set_dof_state_tensor_indexed(
+                    self.sim,
+                    gymtorch.unwrap_tensor(self.dof_state),
+                    gymtorch.unwrap_tensor(franka_actor_indices),
+                    len(franka_actor_indices)
+                )
             
-       
             self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_indices, 0].squeeze(-1)[:, :7] + dpose*delta
-            
+            self.dof_state[:, self.franka_dof_indices, 0] = self.pos_action
             test_dof_state = self.dof_state[:, :, 0].contiguous()
             test_dof_state[:, self.franka_dof_indices] = self.pos_action
-
-            franka_actor_indices = self.franka_indices.to(dtype=torch.int32)
             self.gym.set_dof_position_target_tensor_indexed(
                 self.sim,
                 gymtorch.unwrap_tensor(test_dof_state),
