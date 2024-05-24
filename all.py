@@ -7,15 +7,12 @@ import os
 import time
 import yaml
 import torch
-import pickle
 import numpy as np
 import open3d as o3d
-import pytorch3d.transforms
-from tqdm import tqdm
-import cv2
-import math
+
 import json
-torch.pi = math.pi
+
+import random
 
 
 from BallGenerator import BallGenerator
@@ -27,9 +24,9 @@ from WeighingDomainInfo import WeighingDomainInfo
 class IsaacSim():
     def __init__(self):
 
-        self.grain_type = "soft"
+        self.grain_type = "solid"
         
-        self.default_height = 0.5
+        self.default_height = 0.2
         #tool_type : spoon, knife, stir, fork
         self.tool = "spoon"
 
@@ -39,7 +36,7 @@ class IsaacSim():
         self.domainInfo = WeighingDomainInfo(domain_range=None, flag_list=None)
 
         # create simulator
-        self.env_spacing = 1
+        self.env_spacing = 1.2
         self.max_episode_length = 195
         self.asset_root = "urdf"
         self.gravity = -9.8
@@ -54,29 +51,32 @@ class IsaacSim():
         self.gym.viewer_camera_look_at(self.viewer, None, self.cam_pos, self.cam_target)
 
 
-        # keyboard event
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_UP, "up")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_DOWN, "down")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_LEFT, "left")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_RIGHT, "right")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_W, "backward")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_S, "forward")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_A, "turn_right")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_D, "turn_left")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_E, "turn_up")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_Q, "turn_down")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_SPACE, "reset")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_X, "save")
-        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_B, "quit")
-
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         self.dof_state = gymtorch.wrap_tensor(dof_state_tensor).view(self.num_envs, self.num_dofs, 2)
+
+        self.record_dof = [[0] for _ in range(self.num_envs)]
+        self.All_poses = [[0] for _ in range(self.num_envs)]
+        self.All_steps = np.zeros(self.num_envs)
 
         actor_root_state_tensor = self.gym.acquire_actor_root_state_tensor(self.sim)
         self.root_state_tensor = gymtorch.wrap_tensor(actor_root_state_tensor).view(-1, 13)
 
         _rb_state_tensor = self.gym.acquire_rigid_body_state_tensor(self.sim)
         self.rb_state_tensor = gymtorch.wrap_tensor(_rb_state_tensor).view(-1, 13)
+
+        self.action_space = {
+            "up": torch.Tensor([[-0.0007,  0.0155,  0.0006,  0.0844,  0.0004, -0.0684, -0.0044]]),
+            "down": torch.Tensor([[0, -0.01, 0, -0.1, 0,  1,  0.01]]),
+            "left": torch.Tensor([[-0.0229, -0.0040, -0.0490, -0.0030, -0.0314,  0.0031, -0.0545]]),
+            "right": torch.Tensor([[0.0219,  0.0136,  0.0486,  0.0114,  0.0303, -0.0003,  0.0544]]),
+            "forward": torch.Tensor([[0,  0.15, -0.006,  0.19, -0.0075,  0.09, -0.004]]),
+
+            "scoop_up": torch.Tensor([[ 0, -0.1,  0, -0.1,  0, 0.1,  0]]),
+
+            "backward": torch.Tensor([[0.0033, -0.0965,  0.0027, -0.0556,  0.0034, -0.0411,  0.0011]]),
+            "scoop_down": torch.Tensor([[ 0, 0,  0, -0.1,  0, -0.1,  0]]),
+            "reset" : torch.Tensor([[0,0,0,0,0,0,0]])
+        }
 
     def create_sim(self):
         
@@ -86,8 +86,7 @@ class IsaacSim():
         args.use_gpu = True
         args.use_gpu_pipeline = False
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        self.num_envs = 1
-
+        self.num_envs = 3
         # configure sim
         sim_params = gymapi.SimParams()
         sim_params.up_axis = gymapi.UP_AXIS_Z
@@ -170,17 +169,12 @@ class IsaacSim():
         # set franka dof properties
         self.franka_dof_props = self.gym.get_asset_dof_properties(self.franka_asset)
         self.franka_dof_props["driveMode"].fill(gymapi.DOF_MODE_POS)
-        self.franka_dof_props["stiffness"][0:7].fill(100.0)
-        self.franka_dof_props["damping"][0:9].fill(40.0)
-        self.franka_dof_props["stiffness"][7:9].fill(800.0)
-        self.franka_dof_props["damping"][7:9].fill(40.0)
+        self.franka_dof_props["stiffness"][:].fill(100.0)
+        self.franka_dof_props["damping"][:].fill(40.0)
+
+        # self.franka_dof_props["effort"] /= 5
 
 
-        
-        #lock joint
-        # locked_joints = []
-        # for joint_index in locked_joints:
-        #     self.franka_dof_props["effort"][joint_index] = 0
 
         # set default pose
         self.franka_start_pose = gymapi.Transform()
@@ -188,30 +182,28 @@ class IsaacSim():
         self.franka_start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
 
-    def add_franka(self, i):
+    def add_franka(self):
         # create franka and set properties
-        self.franka_handle = self.gym.create_actor(self.env_ptr, self.franka_asset, self.franka_start_pose, "franka", i, 4, 2)
+        self.franka_handle = self.gym.create_actor(self.env_ptr, self.franka_asset, self.franka_start_pose, "franka", 0, 4, 2)
        
         body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, self.franka_handle)
-        for i in range(11):
-            body_shape_prop[i].thickness = 0.001
+        for k in range(11):
+            body_shape_prop[k].thickness = 0.001
             
         self.gym.set_actor_rigid_shape_properties(self.env_ptr, self.franka_handle, body_shape_prop)
 
         franka_sim_index = self.gym.get_actor_index(self.env_ptr, self.franka_handle, gymapi.DOMAIN_SIM)
         self.franka_indices.append(franka_sim_index)
 
-        franka_dof_index = [
-            self.gym.find_actor_dof_index(self.env_ptr, self.franka_handle, dof_name, gymapi.DOMAIN_SIM)
-            for dof_name in self.franka_dof_names
-        ]
-     
-        self.franka_dof_indices.extend(franka_dof_index)
+        # self.franka_dof_index = [
+        #     self.gym.find_actor_dof_index(self.env_ptr, self.franka_handle, dof_name, gymapi.DOMAIN_SIM)
+        #     for dof_name in self.franka_dof_names
+        # ]
+        self.franka_dof_index = [0,1,2,3,4,5,6,7,8]
 
         self.franka_hand = self.gym.find_actor_rigid_body_handle(self.env_ptr, self.franka_handle, "panda_hand")
 
         self.franka_hand_sim_idx = self.gym.find_actor_rigid_body_index(self.env_ptr, self.franka_handle, "panda_hand", gymapi.DOMAIN_SIM)
-        self.franka_hand_indices.append(self.franka_hand_sim_idx)
         self.gym.set_actor_dof_properties(self.env_ptr, self.franka_handle, self.franka_dof_props)
 
         
@@ -228,10 +220,10 @@ class IsaacSim():
 
     def create_ball(self):
 
-        self.ball_amount = 30
+        
         self.ball_radius = 0.003
         self.ball_mass = 0.0001
-        self.ball_friction = 0.1
+        self.ball_friction = 0.01
 
         self.between_ball_space = 0.03
         ballGenerator = BallGenerator()
@@ -262,7 +254,7 @@ class IsaacSim():
     def create_soft_ball(self):
 
         # Load Soft asset
-        self.soft_amount = 4
+        
         #(scale, density) -> (0.007, 1e4), (0.009, 1e3)
         density = 1e3
         youngs = 1e10
@@ -312,22 +304,22 @@ class IsaacSim():
         
     def add_solid(self):
         #add balls
-
+        self.ball_amount = 30
         ball_pose = gymapi.Transform()
-        z = self.default_height/2 +0.05
+        z = self.default_height/2 +0.03
         ball_pose.r = gymapi.Quat(0, 0, 0, 1)
         self.ball_handle_list = []
         layer = 0
         while self.ball_amount > 0:
             y = -0.53
-            ran = min(self.ball_amount, 8)
+            ran = min(self.ball_amount, 6)
             layer += 1
             for j in range(ran):
                 x = 0.48 
                 for k in range(ran):
                     ball_pose.p = gymapi.Vec3(x, y, z)
                     ball_handle = self.set_ball_property(ball_pose)
-                    self.ball_handle_list.append(ball_handle)
+                    #self.ball_handle_list.append(ball_handle)
                     x += self.ball_radius*2 + 0.001*j
                 y += self.ball_radius*2 + 0.001*j
             z += self.ball_radius*2
@@ -336,7 +328,7 @@ class IsaacSim():
 
     def add_soft(self):
         #add balls
-
+        self.soft_amount = 4
         ball_pose = gymapi.Transform()
         z = self.default_height/2 +0.1
         ball_pose.r = gymapi.Quat(0, 0, 0, 1)
@@ -369,10 +361,7 @@ class IsaacSim():
     
         # cache some common handles for later use
         self.camera_handles = []
-        self.franka_indices, self.urdf_indices = [], []
-        self.franka_dof_indices = []
-        self.franka_hand_indices = []
-        self.urdf_link_indices = []
+        self.franka_indices = []
         self.envs = []
 
         #set camera
@@ -387,7 +376,6 @@ class IsaacSim():
             self.env_ptr = self.gym.create_env(self.sim, lower, upper, num_per_row)
             self.envs.append(self.env_ptr)
 
-            
             #add bowl_1
             bowl_pose = gymapi.Transform()
             bowl_pose.r = gymapi.Quat(0, 0, 0, 1)
@@ -414,10 +402,14 @@ class IsaacSim():
             # add tabel
             table_pose = gymapi.Transform()
             table_pose.r = gymapi.Quat(0, 0, 0, 1)
-            table_pose.p = gymapi.Vec3(0.5, -0.5 , 0)   
+            table_pose.p = gymapi.Vec3(0.5, -0.5 , -0.15)   
             self.table = self.gym.create_actor(self.env_ptr, self.table_asset, table_pose, "table", 0, 0)
+            body_shape_prop = self.gym.get_actor_rigid_shape_properties(self.env_ptr, self.table)
+            body_shape_prop[0].thickness = 0.0005      
+            body_shape_prop[0].friction = 0.5
+            self.gym.set_actor_rigid_shape_properties(self.env_ptr, self.table, body_shape_prop)
             
-            # add ball
+            #add ball
             if self.grain_type == "solid":
                 self.add_solid()
             else :
@@ -425,8 +417,9 @@ class IsaacSim():
 
             
             #add franka
-            self.add_franka(i)
-            
+           
+            self.add_franka()
+
             
             #add camera_1
             cam_pos = gymapi.Vec3(0.7, 0, 0.9)
@@ -444,43 +437,8 @@ class IsaacSim():
             #                         gymapi.FOLLOW_TRANSFORM)
             # self.camera_handles.append(camera_2)
 
-        self.franka_indices = to_torch(self.franka_indices, dtype=torch.long, device="cpu")
-        self.franka_dof_indices = to_torch(self.franka_dof_indices, dtype=torch.long, device="cpu")
-        self.franka_hand_indices = to_torch(self.franka_hand_indices, dtype=torch.long, device="cpu")
-        self.urdf_indices = to_torch(self.urdf_indices, dtype=torch.long, device="cpu")
-        self.urdf_link_indices = to_torch(self.urdf_link_indices, dtype=torch.long, device="cpu")
+        self.franka_actor_indices = to_torch(self.franka_indices, dtype = torch.int32, device = "cpu")
 
-    def reset(self):
-        #save property
-        self.balls_dis = []
-        self.scooped_quantity = []
-        self.joint_state = []
-
-        self.franka_init_pose = torch.tensor([-0.0148, -0.5360, -0.0055, -2.3370,  0.0181,  1.9275,  0.8029,  0.02,  0.02], dtype=torch.float32)
-        
-        self.dof_state[:, self.franka_dof_indices, 0] = self.franka_init_pose
- 
-        self.dof_state[:, self.franka_dof_indices, 1] = 0
-        target_tesnsor = self.dof_state[:, :, 0].contiguous()
-        self.pos_action = torch.zeros((self.num_envs, 9), dtype=torch.float32)
-        self.pos_action[:, 0:9] = target_tesnsor[:, self.franka_dof_indices[0:9]]
-
-        franka_actor_indices = self.franka_indices.to(dtype=torch.int32)
-        self.gym.set_dof_state_tensor_indexed(
-            self.sim,
-            gymtorch.unwrap_tensor(self.dof_state),
-            gymtorch.unwrap_tensor(franka_actor_indices),
-            len(franka_actor_indices)
-        )
-
-        self.gym.set_dof_position_target_tensor_indexed(
-            self.sim,
-            gymtorch.unwrap_tensor(target_tesnsor),
-            gymtorch.unwrap_tensor(franka_actor_indices),
-            len(franka_actor_indices)
-        )
-
-        self.frame = 0
 
     def quantity(self):
         ball_in_spoon = 0
@@ -492,13 +450,59 @@ class IsaacSim():
         return ball_in_spoon
 
 
+    def move_generate(self, franka_idx):
+        
+        if self.round[franka_idx] %4 == 0:
+            first_down = random.randint(min(self.round[franka_idx], 70), 70)
+        else : 
+            first_down = 0
+
+        down_num = random.randint(30, 60)
+        fower_num = random.randint(0, 20)
+        L_num = random.randint(0, 30)
+        R_num = random.randint(0, 30)
+        scoop_num = 50
+
+        action_list = ["down"] * down_num + ["forward"] * fower_num + ["left"] * L_num + ["right"]*R_num + ["scoop_up"] * scoop_num
+        
+
+        # Shuffle the list randomly
+        random.shuffle(action_list)
+        action_list = ["down"] * first_down + action_list
+        
+        dposes = torch.cat([self.action_space.get(action) for action in action_list])
+ 
+
+        self.All_poses[franka_idx] = dposes
+        self.All_steps[franka_idx] = len(dposes)
+        
+    
+    def reset_franka(self, franka_idx):
+     
+        franka_init_pose = torch.tensor([[-0.0371,  0.0939,  0.0481, -1.8604, -0.0090,  1.5319,  0.8286,  0.02,  0.02]], dtype=torch.float32)
+ 
+
+        self.dof_state[franka_idx, self.franka_dof_index, 0] = franka_init_pose
+        self.dof_state[franka_idx, self.franka_dof_index, 1] = 0
+
+        self.gym.set_dof_state_tensor_indexed(
+            self.sim,
+            gymtorch.unwrap_tensor(self.dof_state),
+            gymtorch.unwrap_tensor(self.franka_actor_indices[franka_idx].unsqueeze(0)),
+            1
+        )
+
 
     def data_collection(self):
         
-        self.reset()
-        scoop_round = 0
         action = ""
-        pre_time = time.time()
+        self.round = [0]*self.num_envs
+        self.pos_action = torch.zeros((self.num_envs, 9), dtype=torch.float32)
+        self.frame = 0
+        dpose_index =  np.zeros(self.num_envs ,dtype=int)
+       
+        for i in range(self.num_envs):
+            self.move_generate(i)
 
         while not self.gym.query_viewer_has_closed(self.viewer):
      
@@ -507,94 +511,105 @@ class IsaacSim():
             self.gym.refresh_dof_state_tensor(self.sim)
             self.gym.refresh_actor_root_state_tensor(self.sim)
             self.gym.refresh_rigid_body_state_tensor(self.sim)
-            franka_actor_indices = self.franka_indices.to(dtype=torch.int32)
+            
+            if self.frame <= 50 : 
+                self.frame += 1
+                if self.frame == 50 :
+                    franka_init_pose = torch.tensor([-0.0371,  0.0939,  0.0481, -1.8604, -0.0090,  1.5319,  0.8286,  0.02,  0.02], dtype=torch.float32)
 
-            # get camera images
-            self.gym.render_all_camera_sensors(self.sim)
-            self.gym.start_access_image_tensors(self.sim)
+                    self.dof_state[:, self.franka_dof_index, 0] = franka_init_pose
+                    self.dof_state[:, self.franka_dof_index, 1] = 0
 
-            if not os.path.exists(f"collected_data/scoop_round_{scoop_round}/top_view"):
-                os.makedirs(f"collected_data/scoop_round_{scoop_round}/top_view")
-            if not os.path.exists(f"collected_data/scoop_round_{scoop_round}/hand_view"):
-                os.makedirs(f"collected_data/scoop_round_{scoop_round}/hand_view")
-            '''
-            import datetime
-            now = datetime.datetime.now()
-            if self.frame > 10 :
-                #self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[0], gymapi.IMAGE_COLOR, f"collected_data/scoop_round_{scoop_round}/top_view/{str(self.frame)}.png")
-                #self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[1], gymapi.IMAGE_COLOR, f"collected_data/scoop_round_{scoop_round}/hand_view/{str(self.frame)}.png")
-                #self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[0], gymapi.IMAGE_DEPTH, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/top_view/depth_{str(self.frame)}.png")
-                #self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[1], gymapi.IMAGE_DEPTH, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/hand_view/depth_{str(self.frame)}.png")
-                self.scooped_quantity.append(self.quantity())
+                    self.gym.set_dof_state_tensor_indexed(
+                        self.sim,
+                        gymtorch.unwrap_tensor(self.dof_state),
+                        gymtorch.unwrap_tensor(self.franka_actor_indices),
+                        len(self.franka_actor_indices)
+                    )
+            else : 
+       
+                dpose = torch.stack([pose[dpose_index[i]] for i, pose in enumerate(self.All_poses[:])])
+                # self.keyboard_control()
+                # for evt in self.gym.query_viewer_action_events(self.viewer):
+                #     action = evt.action if (evt.value) > 0 else "reset"
+                # dpose = self.action_space.get(action)
                 
-                for ball_handle in self.ball_handle_list:
-                    body_states = self.gym.get_actor_rigid_body_states(self.envs[0], ball_handle, gymapi.STATE_ALL)
-                    ball_dis = body_states['pose']['p'][0]
-                    self.balls_dis.append(list(ball_dis))
+                dpose_index+=1
+                self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_index, 0].squeeze(-1)[:, :7] + dpose
+                self.dof_state[:, self.franka_dof_index, 0] = self.pos_action.clone()
+                self.All_steps -= 1
 
-            body_states = self.gym.get_actor_rigid_body_states(self.envs[0], self.spoon, gymapi.STATE_ALL)
-            '''
-            delta = 1
-            for evt in self.gym.query_viewer_action_events(self.viewer):
-                action = evt.action if (evt.value) > 0 else ""
-            
-            # if self.frame == 50 :
-            #     action = "reset"
 
-            dpose = torch.Tensor([[0,0,0,0,0,0,0]]) 
-
-            if action == "up":
-                dpose = torch.Tensor([[-1.3305e-05,  4.3099e-02,  1.1453e-05,  1.1561e-01, -1.4394e-05, -7.2039e-02, -2.8402e-05]])
-            elif action == "down":
-                dpose = torch.Tensor([[-1.2356e-05, -2.4698e-02,  7.8406e-06, -9.3232e-02, -4.0112e-07,  6.8173e-02, -5.2245e-05]])
-            elif action == "left":
-                dpose = torch.Tensor([[-0.0131,  0.0099, -0.0457,  0.0097, -0.0193,  0.0021, -0.0550]])
-            elif action == "right":
-                dpose = torch.Tensor([[0.0135, 0.0051, 0.0456, 0.0050, 0.0202, 0.0011, 0.0549]])
-            elif action == "backward":
-                dpose = torch.Tensor([[-5.9015e-05, -8.0673e-02, -4.5151e-05, -4.1219e-02, -7.2966e-05,  -3.9511e-02, -8.0660e-05]])
-            elif action == "forward":
-                dpose = torch.Tensor([[-4.2675e-05,  8.5662e-02, -3.3832e-05,  7.9213e-02, -5.4681e-05,  6.6877e-03, -6.6061e-05]])
-            elif action == "turn_left":
-                dpose = torch.Tensor([[-0.0784,  0.0023,  0.0483,  0.0166,  0.0187, -0.0355,  0.2648]])
-            elif action == "turn_right":
-                dpose = torch.Tensor([[ 0.0775,  0.0020, -0.0529,  0.0076, -0.0055, -0.0154, -0.2675]])
-            elif action == "turn_up":
-                dpose = torch.Tensor([[ 9.1676e-05,  1.2668e-01,  6.6803e-05,  9.0901e-02, -5.7178e-04, -2.6339e-01, -5.4366e-04]])
-            elif action == "turn_down":
-                dpose = torch.Tensor([[ 9.4986e-04, -8.1441e-02, -2.4071e-04, -1.6091e-01,  1.4590e-03, 3.7796e-01, -1.8983e-03]])
-            elif action == "reset" : 
-                franka_init_pose = torch.tensor([[2.9547e-06, -2.6861e-01, -1.7330e-02, -2.1354e+00,  2.6204e-02, 1.9601e+00,  7.7954e-01,  0.02,  0.02]], dtype=torch.float32)
-                self.dof_state[:, self.franka_dof_indices, 0] = franka_init_pose
-                self.gym.set_dof_state_tensor_indexed(
-                    self.sim,
-                    gymtorch.unwrap_tensor(self.dof_state),
-                    gymtorch.unwrap_tensor(franka_actor_indices),
-                    len(franka_actor_indices)
-                )
-            
-            self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_indices, 0].squeeze(-1)[:, :7] + dpose*delta
-            self.dof_state[:, self.franka_dof_indices, 0] = self.pos_action
-            test_dof_state = self.dof_state[:, :, 0].contiguous()
-            test_dof_state[:, self.franka_dof_indices] = self.pos_action
+            temp = self.dof_state[:, self.franka_dof_index, 0].clone()
             self.gym.set_dof_position_target_tensor_indexed(
                 self.sim,
-                gymtorch.unwrap_tensor(test_dof_state),
-                gymtorch.unwrap_tensor(franka_actor_indices),
-                len(franka_actor_indices)
+                gymtorch.unwrap_tensor(temp),
+                gymtorch.unwrap_tensor(self.franka_actor_indices),
+                len(self.franka_actor_indices)
             )
 
+            #record dof info
+            for i in range(self.num_envs):
+                if self.All_steps[i] == 0:
+                    self.round[i] += 1
+                    self.move_generate(i)
+                    dpose_index[i] = 0
+                    #self.record_dof[i].append(self.dof_state[i, self.franka_dof_index, 0])
+
+                    if self.round[i] % 4 == 0:
+                        self.reset_franka(i)
+         
 
             # update the viewer
             self.gym.step_graphics(self.sim)
             self.gym.draw_viewer(self.viewer, self.sim, True)
-
             self.gym.sync_frame_time(self.sim)
-
-            self.frame += 1
 
         self.gym.destroy_viewer(self.viewer)
         self.gym.destroy_sim(self.sim)
+
+    def get_image(self):
+    # get camera images
+        self.gym.render_all_camera_sensors(self.sim)
+        self.gym.start_access_image_tensors(self.sim)
+        scoop_round = 0
+        pre_time = time.time()
+
+        if not os.path.exists(f"collected_data/scoop_round_{scoop_round}/top_view"):
+            os.makedirs(f"collected_data/scoop_round_{scoop_round}/top_view")
+        if not os.path.exists(f"collected_data/scoop_round_{scoop_round}/hand_view"):
+            os.makedirs(f"collected_data/scoop_round_{scoop_round}/hand_view")
+        '''
+        import datetime
+        now = datetime.datetime.now()
+        if self.frame > 10 :
+            #self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[0], gymapi.IMAGE_COLOR, f"collected_data/scoop_round_{scoop_round}/top_view/{str(self.frame)}.png")
+            #self.gym.write_camera_image_to_file(self.sim, self.envs[0], self.camera_handles[1], gymapi.IMAGE_COLOR, f"collected_data/scoop_round_{scoop_round}/hand_view/{str(self.frame)}.png")
+            #self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[0], gymapi.IMAGE_DEPTH, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/top_view/depth_{str(self.frame)}.png")
+            #self.gym.write_camera_image_to_file(self.sim, self.envs[i], self.camera_handles[1], gymapi.IMAGE_DEPTH, f"collected_data/${now:%Y.%m.%d}/${now:%H.%M.%S}/hand_view/depth_{str(self.frame)}.png")
+            self.scooped_quantity.append(self.quantity())
+            
+            for ball_handle in self.ball_handle_list:
+                body_states = self.gym.get_actor_rigid_body_states(self.envs[0], ball_handle, gymapi.STATE_ALL)
+                ball_dis = body_states['pose']['p'][0]
+                self.balls_dis.append(list(ball_dis))
+
+        body_states = self.gym.get_actor_rigid_body_states(self.envs[0], self.spoon, gymapi.STATE_ALL)
+            '''
+
+    def keyboard_control(self):
+        # keyboard event
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_UP, "up")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_DOWN, "down")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_A, "left")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_D, "right")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_W, "backward")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_S, "forward")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_E, "scoop_up")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_Q, "scoop_down")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_SPACE, "gripper_close")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_X, "save")
+        self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_B, "quit")
 
 
 if __name__ == "__main__":
