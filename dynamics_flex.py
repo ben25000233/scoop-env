@@ -558,9 +558,9 @@ class IsaacSim():
         # last "rest" for waiting the balls drops to calculate the spillage amount
         action_list = ["rest"] * rest_num + ["down"] * first_down  + action_list + ["rest"] * 20 
 
-        delta = 1
+        self.delta = 0.05
         
-        dposes = torch.cat([self.action_space.get(action)*delta for action in action_list])
+        dposes = torch.cat([self.action_space.get(action)* self.delta for action in action_list])
 
  
 
@@ -631,16 +631,16 @@ class IsaacSim():
        
                 dpose = torch.stack([pose[dpose_index[i]] for i, pose in enumerate(self.All_poses[:])])
               
-                # self.keyboard_control()
-                # for evt in self.gym.query_viewer_action_events(self.viewer):
-                #     action = evt.action if (evt.value) > 0 else "rest"
-                # dpose = self.action_space.get(action) * 10
+                self.keyboard_control()
+                for evt in self.gym.query_viewer_action_events(self.viewer):
+                    action = evt.action if (evt.value) > 0 else "rest"
+                dpose = self.action_space.get(action) 
                
-                # print(self.dof_state[:, self.franka_dof_index, 0].squeeze(-1)[:, :7])
+                print(self.dof_state[:, self.franka_dof_index, 0].squeeze(-1)[:, :7])
                 
      
                 dpose_index+=1
-                self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_index, 0].squeeze(-1)[:, :7] + dpose
+                self.pos_action[:, :7] = self.dof_state[:, self.franka_dof_index, 0].squeeze(-1)[:, :7] + dpose*self.delta
                 self.dof_state[:, self.franka_dof_index, 0] = self.pos_action.clone()
                 self.All_steps -= 1
 
