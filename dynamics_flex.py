@@ -68,10 +68,12 @@ class IsaacSim():
         self.gravity = -9.8
         self.create_sim()
 
-        #self.gym.set_light_parameters(self.sim, 0, gymapi.Vec3(0.5, 0.5, 0.5), gymapi.Vec3(0.5, 0.5, 0.5), gymapi.Vec3(0, 0, 0))
 
+        
         # create viewer using the default camera properties
         self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
+
+        
 
         # Look at the first env
 
@@ -93,19 +95,19 @@ class IsaacSim():
         self.rb_state_tensor = gymtorch.wrap_tensor(_rb_state_tensor).view(-1, 13)
 
         self.action_space = {
-            "up": torch.Tensor([[-0.0007,  0.0155,  0.0006,  0.0844,  0.0004, -0.0684, -0.0044]]),
-            "down": torch.Tensor([[0, -0.01, 0, -0.1, 0,  0.1,  0.01]]),
+            "up": torch.Tensor([[0,  -0.1,  0,  0.3,  0., -0.15, 0.]]),
+            "down": torch.Tensor([[0, 0.1, 0, -0.3, 0,  0.2,  0.]]),
             "left": torch.Tensor([[-0.0229, -0.0040, -0.0490, -0.0030, -0.0314,  0.0031, -0.0545]]),
             "right": torch.Tensor([[0.0219,  0.0136,  0.0486,  0.0114,  0.0303, -0.0003,  0.0544]]),
             "forward": torch.Tensor([[0,  0.1, 0,  0.15, 0,  0.01, 0]]),
 
-            "scoop_up": torch.Tensor([[0, -0.07,  0, -0.09,  0.,  0.1,  0]]),         
-            "test":  torch.Tensor([[0, 0,  0, 0,  0.,  0,  -0.1]]),
+            "scoop_up": torch.Tensor([[0, -0.4,  0, -0.45,  0.,  0.45,  0]]),         
+            "test":  torch.Tensor([[0, 0,  0, 0,  0.,  0.1,  0]]),
             "backward": torch.Tensor([[0, -0.1,  0.003, -0.06,  0.003, -0.04,  0]]),
             "scoop_down": torch.Tensor([[ 0, 0,  0, -0.1,  0, -0.1,  0]]),
             "rest" : torch.Tensor([[0,0,0,0,0,0,0]])
         }
-
+        
         
     
 
@@ -205,7 +207,13 @@ class IsaacSim():
         self.franka_dof_props["stiffness"][:].fill(3000.0)
         # self.franka_dof_props["armature"][:] = 100
       
-        #self.franka_dof_props["damping"][:].fill(1000.0)
+        self.franka_dof_props["damping"][:].fill(500.0)
+       
+   
+        self.franka_dof_props["effort"][:] = 500
+
+        
+      
         
         
 
@@ -261,11 +269,13 @@ class IsaacSim():
 
     def create_ball(self):
         self.ball_radius = round(random.uniform(0.003, 0.006), 3)
-        self.ball_mass = round(random.uniform(0.001, 0.01), 3)
+        self.ball_mass = round(random.uniform(0.002, 0.01), 3)
         self.ball_friction = round(random.uniform(0, 0.3),2)
         max_num = int(60/pow(2, (self.ball_radius - 0.003)*1000))
         self.ball_amount = random.randint(int(max_num/5), max_num)
 
+
+       
         # #(0.003:60)(0.004:30)(0.005:15)(0.006:8)
         # self.ball_radius = 0.006
         # self.ball_amount = 8
@@ -528,28 +538,19 @@ class IsaacSim():
 
    
         if self.round[franka_idx] %4 == 0:
-            first_down = random.randint(min((self.round[franka_idx]*1.5+30), 70), 70)
-            first_down = 25
-            print(f"first{first_down}")
+            first_down = random.randint(min((self.round[franka_idx]+10), 25), 25)
             rest_num = 50
 
         else : 
-        
             first_down = 0
             rest_num = 0
 
-        if self.round[franka_idx] %4 == 3:
-            up_num = 50
-        else : 
-            up_num = 0
-
-        down_num = random.randint(30, 60)
         forward_num = random.randint(0, 10)
         L_num = random.randint(0, 30)
         R_num = random.randint(0, 30)
-        scoop_num = 25
+        scoop_num = 28
         
-        action_list = ["down"] * down_num + ["left"] * L_num + ["right"]*R_num + ["scoop_up"] * scoop_num + ["forward"] * forward_num + ["up"] * up_num
+        action_list =  ["left"] * L_num + ["right"]*R_num + ["scoop_up"] * scoop_num + ["forward"] * forward_num 
         
 
         # Shuffle the list randomly
@@ -558,9 +559,9 @@ class IsaacSim():
         # last "rest" for waiting the balls drops to calculate the spillage amount
         action_list = ["rest"] * rest_num + ["down"] * first_down  + action_list + ["rest"] * 20 
 
-        self.delta = 0.05
-        
-        dposes = torch.cat([self.action_space.get(action)* self.delta for action in action_list])
+        self.delta = 0.3
+    
+        dposes = torch.cat([self.action_space.get(action) for action in action_list])
 
  
 
@@ -626,17 +627,16 @@ class IsaacSim():
                         len(self.franka_actor_indices)
                     )
 
-
-            else : 
-       
+            else :   
                 dpose = torch.stack([pose[dpose_index[i]] for i, pose in enumerate(self.All_poses[:])])
               
-                self.keyboard_control()
-                for evt in self.gym.query_viewer_action_events(self.viewer):
-                    action = evt.action if (evt.value) > 0 else "rest"
-                dpose = self.action_space.get(action) 
+                # self.keyboard_control()
+                # for evt in self.gym.query_viewer_action_events(self.viewer):
+                #     action = evt.action if (evt.value) > 0 else "rest"
+                # dpose = self.action_space.get(action) 
+
                
-                print(self.dof_state[:, self.franka_dof_index, 0].squeeze(-1)[:, :7])
+                # print(self.dof_state[:, self.franka_dof_index, 0].squeeze(-1)[:, :7])
                 
      
                 dpose_index+=1
@@ -658,16 +658,16 @@ class IsaacSim():
             #record dof info
             for i in range(self.num_envs):
                 
-                if dpose_index[i] == 50 :
+                # if dpose_index[i] == 50 :
                     #self.get_image(i)
-                    self.cal_spillages(i, reset = 1)
+                    #self.cal_spillages(i, reset = 1)
 
                 if self.All_steps[i] == 0:
                     print(self.round)
                     
                     #self.get_image(i, 1)
-                    self.cal_spillages(i, reset = 0)
-                    print(self.spillage_amount)
+                    #self.cal_spillages(i, reset = 0)
+                    #print(self.spillage_amount)
                     
                     self.round[i] += 1
                     self.move_generate(i)
@@ -778,4 +778,5 @@ class IsaacSim():
 
 if __name__ == "__main__":
     issac = IsaacSim()
+
     issac.data_collection()
