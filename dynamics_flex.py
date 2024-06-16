@@ -49,9 +49,9 @@ class IsaacSim():
             os.makedirs(f"{self.file_root}/top_view/point_cloud")
 
 
-        # count = int(self.count) + 1
-        # self.config['count'] = count
-        self.config['count'] = 0
+        count = int(self.count) + 1
+        self.config['count'] = count
+        #self.config['count'] = 0
 
         with open(self.config_file, 'w') as file:
             yaml.safe_dump(self.config, file)
@@ -73,17 +73,14 @@ class IsaacSim():
         # create viewer using the default camera properties
         self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
 
-        
-
         # Look at the first env
-
         self.gym.viewer_camera_look_at(self.viewer, None, self.cam_pos, self.cam_target)
 
 
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         self.dof_state = gymtorch.wrap_tensor(dof_state_tensor).view(self.num_envs, self.num_dofs, 2)
 
-        self.record_dof = [torch.tensor([], device=self.device) for _ in range(self.num_envs)]
+        # self.record_dof = [torch.tensor([], device=self.device) for _ in range(self.num_envs)]
         self.All_poses = [torch.tensor([], device=self.device) for _ in range(self.num_envs)]
         
         self.All_steps = np.zeros(self.num_envs)
@@ -119,7 +116,7 @@ class IsaacSim():
         args.use_gpu = True
         args.use_gpu_pipeline = False
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        self.num_envs = 2
+        self.num_envs = 1
         # configure sim
         sim_params = gymapi.SimParams()
         sim_params.up_axis = gymapi.UP_AXIS_Z
@@ -212,15 +209,6 @@ class IsaacSim():
    
         self.franka_dof_props["effort"][:] = 500
 
-        
-      
-        
-        
-
-        # self.franka_dof_props["effort"] /= 5
-
-
-
         # set default pose
         self.franka_start_pose = gymapi.Transform()
         self.franka_start_pose.p = gymapi.Vec3(0, -0.5, 0.0)
@@ -272,14 +260,8 @@ class IsaacSim():
         self.ball_mass = round(random.uniform(0.002, 0.01), 3)
         self.ball_friction = round(random.uniform(0, 0.3),2)
         max_num = int(60/pow(2, (self.ball_radius - 0.003)*1000))
-        self.ball_amount = random.randint(int(max_num/5), max_num)
+        self.ball_amount = random.randint(int(max_num/3), max_num)
 
-
-       
-        # #(0.003:60)(0.004:30)(0.005:15)(0.006:8)
-        # self.ball_radius = 0.006
-        # self.ball_amount = 8
-        
 
         with open(f"{self.file_root}/ball_property" , "a") as file:
             file.write(f"radius:{self.ball_radius}\n")
@@ -441,6 +423,7 @@ class IsaacSim():
 
         self.ball_handles = [[] for _ in range(self.num_envs)]
         self.spillage_amount = [[] for _ in range(self.num_envs)]
+        self.record_dof = [[] for _ in range(self.num_envs)]
 
         # create and populate the environments
         for i in range(num_envs):
@@ -490,11 +473,9 @@ class IsaacSim():
             else :
                 self.add_soft()
 
-            
             #add franka
             self.add_franka()
 
-            
             #add camera_1
 
             self.cam_pos = gymapi.Vec3(0.8, -0.5, 0.5)
@@ -517,7 +498,7 @@ class IsaacSim():
 
 
     def cal_spillages(self, env_index, reset = 0):
-    
+        
         spillage_amount = 0
         for ball in self.ball_handles[env_index]:
             body_states = self.gym.get_actor_rigid_body_states(self.envs[env_index], ball, gymapi.STATE_ALL)
@@ -527,7 +508,9 @@ class IsaacSim():
                 spillage_amount += 1
 
         if reset == 0:
+            #print(f"spillage : {int(spillage_amount - self.pre_spillage[env_index])}")
             self.spillage_amount[env_index].append(int(spillage_amount - self.pre_spillage[env_index]))
+       
         else : 
             self.pre_spillage[env_index] = int(spillage_amount)
 
@@ -543,7 +526,7 @@ class IsaacSim():
 
         else : 
             first_down = 0
-            rest_num = 0
+            rest_num = 10
 
         forward_num = random.randint(0, 10)
         L_num = random.randint(0, 30)
@@ -569,20 +552,34 @@ class IsaacSim():
         self.All_steps[franka_idx] = len(dposes)
         
     
-    def reset_franka(self, franka_idx):
+    def reset_franka(self, franka_idx, init = 0):
      
         franka_init_pose = torch.tensor([[-1.0082e-01,  6.4396e-01,  8.5755e-02, -1.1540e+00,  6.5656e-03,
           9.5438e-01,  7.6676e-01,  0.02,  0.02]], dtype=torch.float32)
         
-        self.dof_state[franka_idx, self.franka_dof_index, 0] = franka_init_pose
-        self.dof_state[franka_idx, self.franka_dof_index, 1] = 0
+        if init == 1:
+            self.dof_state[:, self.franka_dof_index, 0] = franka_init_pose
+            self.dof_state[:, self.franka_dof_index, 1] = 0
+            for i in range(self.num_envs):
+                self.record_dof[i].append(franka_init_pose[0][:-2])
 
-        self.gym.set_dof_state_tensor_indexed(
-            self.sim,
-            gymtorch.unwrap_tensor(self.dof_state),
-            gymtorch.unwrap_tensor(self.franka_actor_indices[franka_idx].unsqueeze(0)),
-            1
-        )
+            self.gym.set_dof_state_tensor_indexed(
+                self.sim,
+                gymtorch.unwrap_tensor(self.dof_state),
+                gymtorch.unwrap_tensor(self.franka_actor_indices),
+                len(self.franka_actor_indices)
+            )
+        else : 
+            self.dof_state[franka_idx, self.franka_dof_index, 0] = franka_init_pose
+            self.dof_state[franka_idx, self.franka_dof_index, 1] = 0
+            self.record_dof[franka_idx].append(self.dof_state[franka_idx, self.franka_dof_index, 0][:-2])
+
+            self.gym.set_dof_state_tensor_indexed(
+                self.sim,
+                gymtorch.unwrap_tensor(self.dof_state),
+                gymtorch.unwrap_tensor(self.franka_actor_indices[franka_idx].unsqueeze(0)),
+                1
+            )
 
 
 
@@ -592,7 +589,7 @@ class IsaacSim():
         # if not os.path.exists(f"dynamics/collected_data/hand_view"):
         #     os.makedirs(f"dynamics/collected_data/hand_view")
 
-        self.collect_time = 1
+        self.collect_time = 20
         action = "rest"
         self.round = [0]*self.num_envs
         self.pos_action = torch.zeros((self.num_envs, 9), dtype=torch.float32)
@@ -614,18 +611,7 @@ class IsaacSim():
             if self.frame <= 50 : 
                 self.frame += 1
                 if self.frame == 50 :
-                    franka_init_pose = torch.tensor([-1.0082e-01,  6.4396e-01,  8.5755e-02, -1.1540e+00,  6.5656e-03,
-          9.5438e-01,  7.6676e-01,  0.02,  0.02], dtype=torch.float32)
-
-                    self.dof_state[:, self.franka_dof_index, 0] = franka_init_pose
-                    self.dof_state[:, self.franka_dof_index, 1] = 0
-
-                    self.gym.set_dof_state_tensor_indexed(
-                        self.sim,
-                        gymtorch.unwrap_tensor(self.dof_state),
-                        gymtorch.unwrap_tensor(self.franka_actor_indices),
-                        len(self.franka_actor_indices)
-                    )
+                    self.reset_franka(0 , init = 1)
 
             else :   
                 dpose = torch.stack([pose[dpose_index[i]] for i, pose in enumerate(self.All_poses[:])])
@@ -658,30 +644,32 @@ class IsaacSim():
             #record dof info
             for i in range(self.num_envs):
                 
-                # if dpose_index[i] == 50 :
-                    #self.get_image(i)
-                    #self.cal_spillages(i, reset = 1)
+                if dpose_index[i] == 20 :
+                    self.get_image(i)
+                    #record the init spillage amount
+                    self.cal_spillages(i, reset = 1) 
 
                 if self.All_steps[i] == 0:
-                    print(self.round)
-                    
-                    #self.get_image(i, 1)
-                    #self.cal_spillages(i, reset = 0)
-                    #print(self.spillage_amount)
+                    #calculate the spillage amount
+                    self.cal_spillages(i, reset = 0)
                     
                     self.round[i] += 1
                     self.move_generate(i)
                     dpose_index[i] = 0
-                    #self.record_dof[i].append(self.dof_state[i, self.franka_dof_index, 0])
+                    self.record_dof[i].append(self.dof_state[i, self.franka_dof_index, 0][:-2])
 
                     if self.round[i] % 4 == 0:
-                        self.reset_franka(i)
+                        self.reset_franka(i, init = 0)
+
+                    
                         
-            
-            if all(round > (self.collect_time*4) for round in self.round):
+            if all(round >= (self.collect_time*4) for round in self.round):
                 with open(self.file_root + "/spillage_amount", "a") as file:
-                    for item in self.spillage_amount:
-                        file.write(f"{item[:]}\n")
+                    file.write(f"{self.spillage_amount[:]}\n")
+                with open(self.file_root + "/robot_pose", "a") as file:
+                    file.write(f"{self.record_dof}\n")
+                break
+                
             
 
     
@@ -727,21 +715,18 @@ class IsaacSim():
         fu = 2/proj[0, 0]
         fv = 2/proj[1, 1]
 
-        # Ignore any points which originate from ground plane or empty space
-        # depth_image[seg_buffer == 0] = -10001
 
         centerU = self.camera_props.width/2
         centerV = self.camera_props.height/2
         for i in range(self.camera_props.width):
             for j in range(self.camera_props.height):
-
-                # if depth_image[j, i] > -0.4:
-                u = -(i-centerU)/(self.camera_props.width)  # image-space coordinate
-                v = (j-centerV)/(self.camera_props.height)  # image-space coordinate
-                d = depth_image[j, i]  # depth buffer value
-                X2 = [d*fu*u, d*fv*v, d, 1]  # deprojection vector
-                p2 = X2*vinv  # Inverse camera view to get world coordinates
-                points.append([p2[0, 2], p2[0, 0], p2[0, 1]])
+                if depth_image[j, i] > -0.3:
+                    u = -(i-centerU)/(self.camera_props.width)  # image-space coordinate
+                    v = (j-centerV)/(self.camera_props.height)  # image-space coordinate
+                    d = depth_image[j, i]  # depth buffer value
+                    X2 = [d*fu*u, d*fv*v, d, 1]  # deprojection vector
+                    p2 = X2*vinv  # Inverse camera view to get world coordinates
+                    points.append([p2[0, 2], p2[0, 0], p2[0, 1]])
 
         points_np = np.array(points)
 
@@ -777,6 +762,6 @@ class IsaacSim():
 
 
 if __name__ == "__main__":
-    issac = IsaacSim()
-
-    issac.data_collection()
+    for i in range(100):
+        issac = IsaacSim()
+        issac.data_collection()
